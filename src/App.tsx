@@ -55,6 +55,11 @@ import {
 } from 'recharts';
 import { AppState, ImportedFile } from './types';
 
+// --- MODIFICATIONS TECHNIQUES POUR SUPABASE ---
+import { supabase } from './lib/supabase';
+import * as XLSX from 'xlsx';
+// ----------------------------------------------
+
 const SECTORS = [
   "Prêt-à-porter",
   "Articles enfant et bebe",
@@ -122,18 +127,50 @@ export default function App() {
     }, 2000);
   };
 
+  // --- LOGIQUE D'IMPORTATION SÉCURISÉE ---
   const handleFileUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
     if (file) {
-      const newFile: ImportedFile = {
-        name: file.name,
-        size: (file.size / (1024 * 1024)).toFixed(1) + ' MB',
-        date: new Date().toLocaleDateString('fr-FR', { day: 'numeric', month: 'long', year: 'numeric', hour: '2-digit', minute: '2-digit' }),
-        count: 247
+      const reader = new FileReader();
+      reader.onload = async (evt) => {
+        try {
+          const bstr = evt.target?.result;
+          const wb = XLSX.read(bstr, { type: 'binary' });
+          const jsonData = XLSX.utils.sheet_to_json(wb.Sheets[wb.SheetNames[0]]);
+
+          // Mapping strict vers ta table Supabase "produit"
+          const cleanData = jsonData.map((item: any) => ({
+            code_article: String(item.code_article || ''),
+            famille_produit: String(item.famille_produit || ''),
+            date_transaction: String(item.date_transaction || ''),
+            quantite_vendue: parseInt(item.quantite_vendue) || 0,
+            point_de_vente: String(item.point_de_vente || ''),
+            stock_actuel: parseInt(item.stock_actuel) || 0,
+            prix_vente_ht: String(item.prix_vente_ht || '0')
+          }));
+
+          // Insertion dans Supabase
+          const { error } = await supabase.from('produit').insert(cleanData);
+          if (error) throw error;
+
+          const newFile: ImportedFile = {
+            name: file.name,
+            size: (file.size / (1024 * 1024)).toFixed(1) + ' MB',
+            date: new Date().toLocaleDateString('fr-FR', { day: 'numeric', month: 'long', year: 'numeric', hour: '2-digit', minute: '2-digit' }),
+            count: cleanData.length
+          };
+          setState(prev => ({ ...prev, importedFile: newFile }));
+          alert("Données envoyées avec succès à Supabase !");
+          
+        } catch (err: any) {
+          console.error("Erreur base de données:", err.message);
+          alert("Le fichier a été lu mais n'a pas pu être enregistré dans Supabase : " + err.message);
+        }
       };
-      setState(prev => ({ ...prev, importedFile: newFile }));
+      reader.readAsBinaryString(file);
     }
   };
+  // --------------------------------------
 
   const removeFile = () => {
     setState(prev => ({ ...prev, importedFile: null }));
@@ -2045,7 +2082,7 @@ export default function App() {
                       ref={fileInputRef} 
                       onChange={handleFileUpload} 
                       className="hidden" 
-                      accept=".csv"
+                      accept=".csv, .xlsx"
                     />
                   </button>
 
