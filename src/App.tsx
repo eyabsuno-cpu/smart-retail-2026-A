@@ -3,8 +3,8 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
-import React, { useState, useRef, useEffect } from 'react'; // AJOUT : useEffect
-import ReactGA from "react-ga4"; // AJOUT : GA4
+import React, { useState, useRef, useEffect } from 'react';
+import ReactGA from "react-ga4";
 import { 
  LayoutDashboard, 
  Upload, 
@@ -100,6 +100,13 @@ export default function App() {
   showNotifications: false
  });
 
+ // --- NOUVEAUX ÉTATS POUR L'AUTHENTIFICATION RÉELLE ---
+ const [email, setEmail] = useState('');
+ const [otp, setOtp] = useState('');
+ const [isVerifying, setIsVerifying] = useState(false);
+ const [authLoading, setAuthLoading] = useState(false);
+ // -------------------------------------------------------
+
  const [showCalendar, setShowCalendar] = useState(false);
  const [processingSubStep, setProcessingSubStep] = useState<'downloading' | 'analyzing'>('downloading');
  const [progress, setProgress] = useState(0);
@@ -113,10 +120,42 @@ export default function App() {
   ReactGA.send({ hitType: "pageview", page: window.location.pathname + state.step, title: state.step });
  }, [state.step]);
 
- const handleLogin = (e: React.FormEvent) => {
+ // --- LOGIQUE D'AUTHENTIFICATION OTP ---
+ const handleSendOtp = async (e: React.FormEvent) => {
   e.preventDefault();
-  setState(prev => ({ ...prev, step: 'onboarding' }));
+  setAuthLoading(true);
+  
+  const { error } = await supabase.auth.signInWithOtp({
+    email: email,
+    options: { shouldCreateUser: true }
+  });
+
+  if (error) {
+    alert("Erreur d'envoi : " + error.message);
+  } else {
+    setIsVerifying(true);
+  }
+  setAuthLoading(false);
  };
+
+ const handleVerifyOtp = async (e: React.FormEvent) => {
+  e.preventDefault();
+  setAuthLoading(true);
+
+  const { error } = await supabase.auth.verifyOtp({
+    email,
+    token: otp,
+    type: 'email',
+  });
+
+  if (error) {
+    alert("Code incorrect ou expiré.");
+  } else {
+    setState(prev => ({ ...prev, step: 'onboarding' }));
+  }
+  setAuthLoading(false);
+ };
+ // ---------------------------------------
 
  const handleErpConnect = () => {
   if (state.isErpConnected) {
@@ -513,7 +552,7 @@ export default function App() {
         <ArrowRight size={24} />
        </button>
       </div>
-     </motion.div>
+      </motion.div>
     </main>
    </div>
   );
@@ -1467,22 +1506,52 @@ export default function App() {
      <motion.div initial={{ opacity: 0, y: 20 }} animate={{ opacity: 1, y: 0 }} className="max-w-md w-full" >
       <h1 className="text-4xl font-bold text-[#003399] mb-2">Bienvenue</h1>
       <p className="text-slate-500 mb-10">Connectez-vous pour commencer l'onboarding.</p>
-      <form onSubmit={handleLogin} className="space-y-6">
-       <div>
-        <label className="block text-sm font-medium text-slate-700 mb-2">E-mail</label>
-        <input type="email" placeholder="Votre@email.com" className="w-full px-4 py-3 bg-[#f8fbff] border-l-4 border-l-[#0055ff] border-y border-r border-slate-100 rounded-r-lg focus:outline-none focus:ring-2 focus:ring-blue-500/20 transition-all" required pattern="[a-z0-9._%+\-]+@[a-z0-9.\-]+\.[a-z]{2,}$" title="Veuillez entrer une adresse e-mail valide (ex: nom@domaine.com)" />
-       </div>
-       <div>
-        <label className="block text-sm font-medium text-slate-700 mb-2">Mot de passe</label>
-        <input type="password" placeholder="........." className="w-full px-4 py-3 bg-[#f8fbff] border-l-4 border-l-[#0055ff] border-y border-r border-slate-100 rounded-r-lg focus:outline-none focus:ring-2 focus:ring-blue-500/20 transition-all" required />
-       </div>
-       <div className="flex items-center justify-between">
-        <label className="flex items-center gap-2 cursor-pointer group"> <input type="checkbox" className="w-4 h-4 rounded border-slate-300 text-blue-600 focus:ring-blue-500" /> <span className="text-sm text-slate-600 group-hover:text-slate-900 transition-colors">Se souvenir de moi</span> </label>
-        <a href="#" className="text-sm text-blue-600 hover:underline">Mot de passe oublié?</a>
-       </div>
-       <button type="submit" className="w-full bg-[#0958D9] text-white font-semibold py-4 rounded-lg hover:bg-blue-700 transition-all shadow-lg shadow-blue-500/20 active:scale-[0.98]" > Se connecter </button>
-       <p className="text-center text-sm text-slate-500"> Vous n'avez pas de compte? <a href="#" className="text-blue-600 font-medium hover:underline">Inscrivez-vous</a> </p>
-      </form>
+      
+      {/* --- FORMULAIRE RÉEL CONDITIONNEL --- */}
+      {!isVerifying ? (
+        <form onSubmit={handleSendOtp} className="space-y-6">
+          <div>
+           <label className="block text-sm font-medium text-slate-700 mb-2">E-mail</label>
+           <input 
+             type="email" 
+             placeholder="Votre@email.com" 
+             className="w-full px-4 py-3 bg-[#f8fbff] border-l-4 border-l-[#0055ff] border-y border-r border-slate-100 rounded-r-lg focus:outline-none focus:ring-2 focus:ring-blue-500/20 transition-all" 
+             required 
+             value={email}
+             onChange={(e) => setEmail(e.target.value)}
+             pattern="[a-z0-9._%+\-]+@[a-z0-9.\-]+\.[a-z]{2,}$" 
+           />
+          </div>
+          <button type="submit" disabled={authLoading} className="w-full bg-[#0958D9] text-white font-semibold py-4 rounded-lg hover:bg-blue-700 transition-all shadow-lg shadow-blue-500/20 active:scale-[0.98]" > 
+            {authLoading ? "Envoi du code..." : "Recevoir un code par mail"} 
+          </button>
+        </form>
+      ) : (
+        <form onSubmit={handleVerifyOtp} className="space-y-6">
+          <div>
+           <label className="block text-sm font-medium text-slate-700 mb-2">Code de vérification</label>
+           <input 
+             type="text" 
+             placeholder="Code à 6 chiffres" 
+             className="w-full px-4 py-3 bg-[#f8fbff] border-l-4 border-l-[#0055ff] border-y border-r border-slate-100 rounded-r-lg focus:outline-none focus:ring-2 focus:ring-blue-500/20 transition-all text-center text-2xl font-bold tracking-widest" 
+             required 
+             value={otp}
+             onChange={(e) => setOtp(e.target.value)}
+             maxLength={6}
+           />
+           <p className="text-xs text-slate-400 mt-2">Vérifiez vos emails pour trouver le code.</p>
+          </div>
+          <button type="submit" disabled={authLoading} className="w-full bg-[#0958D9] text-white font-semibold py-4 rounded-lg hover:bg-blue-700 transition-all shadow-lg shadow-blue-500/20 active:scale-[0.98]" > 
+            {authLoading ? "Vérification..." : "Valider et Entrer"} 
+          </button>
+          <button type="button" onClick={() => setIsVerifying(false)} className="w-full text-center text-sm text-blue-600 hover:underline">
+            Modifier l'email
+          </button>
+        </form>
+      )}
+      {/* ------------------------------------- */}
+      
+      <p className="text-center text-sm text-slate-500 mt-6"> Vous n'avez pas de compte? <a href="#" className="text-blue-600 font-medium hover:underline">Inscrivez-vous</a> </p>
      </motion.div>
     </div>
    </div>
