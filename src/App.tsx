@@ -19,7 +19,7 @@ import {
  TrendingUp,
  Package,
  CloudRain,
- Target,
+ Target, 
  ArrowRight,
  LogOut,
  Search,
@@ -61,7 +61,7 @@ import { supabase } from './lib/supabase';
 import * as XLSX from 'xlsx';
 // ----------------------------------------------
 
-// INITIALISATION GOOGLE ANALYTICS
+// GA4 : INITIALISATION
 ReactGA.initialize("G-86B5216X0W");
 
 const SECTORS = [
@@ -108,7 +108,7 @@ export default function App() {
 
  const fileInputRef = useRef<HTMLInputElement>(null);
 
- // TRACKING DES PAGES (DÉTECTION DES ÉTAPES)
+ // GA4 : TRACKING DES PAGES (CHANGEMENT D'ÉTAPES)
  useEffect(() => {
   ReactGA.send({ hitType: "pageview", page: window.location.pathname + state.step, title: state.step });
  }, [state.step]);
@@ -126,7 +126,6 @@ export default function App() {
 
   setState(prev => ({ ...prev, isConnectingErp: true }));
   
-  // Simulate connection delay
   setTimeout(() => {
    setState(prev => ({ 
     ...prev, 
@@ -140,7 +139,7 @@ export default function App() {
  const handleFileUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
   const file = e.target.files?.[0];
   if (file) {
-   // TRACKING DE L'ACTION IMPORT
+   // GA4 : TRACKING DU CLIC
    ReactGA.event({ category: "Conversion", action: "upload_excel", label: "Version A" });
 
    const reader = new FileReader();
@@ -150,7 +149,6 @@ export default function App() {
      const wb = XLSX.read(bstr, { type: 'binary' });
      const jsonData = XLSX.utils.sheet_to_json(wb.Sheets[wb.SheetNames[0]]);
 
-     // Mapping strict vers ta table Supabase "produit"
      const cleanData = jsonData.map((item: any) => ({
       code_article: String(item.code_article || ''),
       famille_produit: String(item.famille_produit || ''),
@@ -161,7 +159,6 @@ export default function App() {
       prix_vente_ht: String(item.prix_vente_ht || '0')
      }));
 
-     // Insertion dans Supabase
      const { error } = await supabase.from('produit').insert(cleanData);
      if (error) throw error;
 
@@ -182,7 +179,6 @@ export default function App() {
    reader.readAsBinaryString(file);
   }
  };
- // --------------------------------------
 
  const removeFile = () => {
   setState(prev => ({ ...prev, importedFile: null }));
@@ -205,14 +201,12 @@ export default function App() {
   setProcessingSubStep('downloading');
   setProgress(0);
 
-  // Simulate progress for downloading
   const interval = setInterval(() => {
    setProgress(prev => {
     if (prev >= 100) {
      clearInterval(interval);
      setTimeout(() => {
       setProcessingSubStep('analyzing');
-      // Simulate analysis phase
       setTimeout(() => {
        setState(prevStep => ({ ...prevStep, step: 'ready' }));
       }, 3000);
@@ -234,23 +228,13 @@ export default function App() {
   (state.importedFile || state.isErpConnected);
 
  const Sidebar = ({ variant = 'default' }: { variant?: 'default' | 'detail' }) => {
-  const menuItems = variant === 'default' ? [
-   { icon: LayoutDashboard, label: 'Dashboard', active: true, step: 'dashboard' },
-   { icon: TrendingUp, label: 'Forecasting Unit' },
-   { icon: Home, label: 'Store Allocation' },
-   { icon: Link, label: 'Supplier Connect' },
-   { icon: Cloud, label: 'Weather Hub' },
-  ] : [
+  const menuItems = [
    { icon: LayoutDashboard, label: 'Dashboard', active: true, step: 'dashboard' },
    { icon: TrendingUp, label: 'Forecasting Unit' },
    { icon: Home, label: 'Store Allocation' },
    { icon: Link, label: 'Supplier Connect' },
    { icon: Cloud, label: 'Weather Hub' },
   ];
-
-  const sidebarClasses = variant === 'default' 
-   ? "w-64 bg-white border-r border-slate-200 flex flex-col shrink-0 h-full"
-   : "w-[310px] bg-white border-r border-[#D9D9D9] flex flex-col shrink-0 h-full";
 
   const logoSection = variant === 'default' ? (
    <div className="p-6 flex items-center gap-3 mb-8">
@@ -551,14 +535,11 @@ export default function App() {
     <MobileMenuButton />
     <MobileSidebar />
 
-    {/* Sidebar - Desktop */}
     <aside className="hidden lg:flex w-64 bg-white border-r border-slate-200 flex-col shrink-0">
      <Sidebar />
     </aside>
 
-    {/* Main Content */}
     <div className="flex-1 flex flex-col overflow-hidden">
-     {/* Top Bar */}
      <header className="h-20 bg-white border-b border-slate-200 flex items-center justify-between px-4 lg:px-8 shrink-0">
       <h1 className="text-lg lg:text-2xl font-bold text-slate-800 truncate mr-4">Système de Prévision des Ventes</h1>
       
@@ -591,9 +572,7 @@ export default function App() {
       </div>
      </header>
 
-     {/* Dashboard Content */}
      <main className="flex-1 overflow-y-auto p-4 lg:p-8 space-y-6 lg:space-y-8">
-      {/* Stats Grid */}
       <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4 lg:gap-6">
        {[
         { label: 'FORECAST SALES', value: '€42,850', sub: '+14% vs last period', trend: 'up', color: 'blue', icon: TrendingUp, period: 'NEXT 7 DAYS' },
@@ -630,9 +609,7 @@ export default function App() {
        ))}
       </div>
 
-      {/* Middle Row */}
       <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
-       {/* Main Chart */}
        <div className="lg:col-span-2 bg-white p-4 lg:p-8 rounded-2xl border border-slate-200 shadow-sm">
         <div className="flex flex-col sm:flex-row sm:items-center justify-between mb-8 gap-4">
          <h3 className="text-lg font-bold">Chiffre d'affaire Global</h3>
@@ -751,7 +728,6 @@ export default function App() {
         </div>
        </div>
 
-       {/* SKU en rupture */}
        <div className="bg-white p-8 rounded-2xl border border-slate-200 shadow-sm flex flex-col">
         <div className="flex items-center justify-between mb-8">
          <h3 className="text-lg font-bold">SKU en rupture</h3>
@@ -787,9 +763,7 @@ export default function App() {
        </div>
       </div>
 
-      {/* Bottom Row */}
       <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
-       {/* Recommandation de reassort */}
        <div className="lg:col-span-2 bg-white p-4 lg:p-8 rounded-2xl border border-slate-200 shadow-sm overflow-hidden">
         <h3 className="text-lg font-bold mb-8">Recommandation de reassort</h3>
         
@@ -838,7 +812,6 @@ export default function App() {
         </div>
        </div>
 
-       {/* SKU en Bestseller */}
        <div className="bg-white p-8 rounded-2xl border border-slate-200 shadow-sm flex flex-col">
         <h3 className="text-lg font-bold mb-8">SKU en Bestseller</h3>
         
@@ -871,11 +844,9 @@ export default function App() {
      </main>
     </div>
 
-    {/* Notifications Drawer */}
     <AnimatePresence>
      {state.showNotifications && (
       <>
-       {/* Backdrop */}
        <motion.div
         initial={{ opacity: 0 }}
         animate={{ opacity: 1 }}
@@ -884,7 +855,6 @@ export default function App() {
         className="fixed inset-0 bg-black/20 backdrop-blur-sm z-[60]"
        />
        
-       {/* Drawer */}
        <motion.div
         initial={{ x: '100%' }}
         animate={{ x: 0 }}
@@ -910,55 +880,12 @@ export default function App() {
 
         <div className="flex-1 overflow-y-auto">
          {[
-          {
-           id: 1,
-           type: 'alert',
-           title: 'Alerte de stock critique',
-           message: 'Jimmy Veste en laine et toile de soie (859163YCUA21000) est en rupture de stock dans le....',
-           time: '5 min ago',
-           unread: true,
-           icon: AlertCircle,
-           iconBg: 'bg-red-50',
-           iconColor: 'text-red-500'
-          },
-          {
-           id: 2,
-           type: 'weather',
-           title: 'Impact météo détecté',
-           message: 'Températures élevées prévues. La catégorie Lin d\'été devrait bondir de +22 %.',
-           time: '15 min ago',
-           unread: true,
-           icon: AlertCircle,
-           iconBg: 'bg-red-50',
-           iconColor: 'text-red-500'
-          },
-          {
-           id: 3,
-           type: 'success',
-           title: 'Transmission ERP Confirmée',
-           message: 'La commande n°MF-2025-091 a été transmise avec succès à l\'ERP',
-           time: '1 hour ago',
-           unread: false,
-           icon: CheckCircle2,
-           iconBg: 'bg-green-50',
-           iconColor: 'text-green-500'
-          },
-          {
-           id: 4,
-           type: 'event',
-           title: 'Début de la Fashion Week de Paris',
-           message: 'Événement détecté : Préparez-vous à une hausse de la demande pour les collections de créateurs.',
-           time: '1 hour ago',
-           unread: false,
-           icon: Package,
-           iconBg: 'bg-blue-50',
-           iconColor: 'text-blue-500'
-          }
+          { id: 1, type: 'alert', title: 'Alerte de stock critique', message: 'Jimmy Veste en laine et toile de soie (859163YCUA21000) est en rupture de stock dans le....', time: '5 min ago', unread: true, icon: AlertCircle, iconBg: 'bg-red-50', iconColor: 'text-red-500' },
+          { id: 2, type: 'weather', title: 'Impact météo détecté', message: 'Températures élevées prévues. La catégorie Lin d\'été devrait bondir de +22 %.', time: '15 min ago', unread: true, icon: AlertCircle, iconBg: 'bg-red-50', iconColor: 'text-red-500' },
+          { id: 3, type: 'success', title: 'Transmission ERP Confirmée', message: 'La commande n°MF-2025-091 a été transmise avec succès à l\'ERP', time: '1 hour ago', unread: false, icon: CheckCircle2, iconBg: 'bg-green-50', iconColor: 'text-green-500' },
+          { id: 4, type: 'event', title: 'Début de la Fashion Week de Paris', message: 'Événement détecté : Préparez-vous à une hausse de la demande pour les collections de créateurs.', time: '1 hour ago', unread: false, icon: Package, iconBg: 'bg-blue-50', iconColor: 'text-blue-500' }
          ].map((notif) => (
-          <div 
-           key={notif.id} 
-           className="p-8 border-b border-slate-50 hover:bg-slate-50/50 transition-colors relative group cursor-pointer"
-          >
+          <div key={notif.id} className="p-8 border-b border-slate-50 hover:bg-slate-50/50 transition-colors relative group cursor-pointer">
            <div className="flex gap-4">
             <div className={`w-12 h-12 rounded-xl flex items-center justify-center shrink-0 ${notif.iconBg} ${notif.iconColor}`}>
              <notif.icon size={24} />
@@ -966,13 +893,9 @@ export default function App() {
             <div className="flex-1 min-w-0">
              <div className="flex items-center justify-between mb-1">
               <h3 className="font-bold text-slate-900 text-base">{notif.title}</h3>
-              {notif.unread && (
-               <div className="w-2 h-2 bg-[#0958D9] rounded-full" />
-              )}
+              {notif.unread && ( <div className="w-2 h-2 bg-[#0958D9] rounded-full" /> )}
              </div>
-             <p className="text-sm text-slate-500 leading-relaxed mb-3">
-              {notif.message}
-             </p>
+             <p className="text-sm text-slate-500 leading-relaxed mb-3"> {notif.message} </p>
              <span className="text-xs text-slate-400 font-medium">{notif.time}</span>
             </div>
            </div>
@@ -999,14 +922,11 @@ export default function App() {
     <MobileMenuButton />
     <MobileSidebar variant="detail" />
 
-    {/* Sidebar - Desktop */}
     <aside className="hidden lg:flex w-[310px] bg-white border-r border-[#D9D9D9] flex-col shrink-0">
      <Sidebar variant="detail" />
     </aside>
 
-    {/* Main Content */}
     <div className="flex-1 flex flex-col overflow-hidden bg-[#F8FBFF]/30">
-     {/* Top Bar - Product Info */}
      <header className="bg-white border-b border-[#D9D9D9] px-4 lg:px-6 py-4 lg:py-8 flex flex-col lg:flex-row lg:items-center justify-between shrink-0 gap-4">
       <div className="flex items-center gap-4 lg:gap-6">
        <button 
@@ -1047,7 +967,6 @@ export default function App() {
 
      <div className="flex-1 overflow-y-auto p-4 lg:p-6 space-y-6 lg:space-y-8">
       <div className="grid grid-cols-1 lg:grid-cols-12 gap-6">
-       {/* Initial Forecast */}
        <div className="lg:col-span-8 bg-[#F8FBFF] p-4 lg:p-6 rounded-lg border border-[#BAE0FF] flex flex-col gap-6 lg:gap-8">
         <div className="flex justify-between items-start">
          <div className="flex items-center gap-2 text-[#0958D9]">
@@ -1084,7 +1003,6 @@ export default function App() {
         </div>
        </div>
 
-       {/* AI Forecast */}
        <div className="lg:col-span-4 bg-white p-4 lg:p-6 rounded-lg border border-[#D9D9D9] flex flex-col gap-6 lg:gap-8">
         <div className="flex justify-between items-start">
          <div className="flex items-center gap-2 text-[#0958D9]">
@@ -1121,7 +1039,6 @@ export default function App() {
         </div>
        </div>
 
-       {/* Historical Data */}
        <div className="lg:col-span-8 bg-white p-4 lg:p-8 rounded-lg border border-[#D9D9D9] space-y-6 lg:space-y-8">
         <h3 className="text-xl lg:text-2xl font-semibold text-black/88">Données Historiques de Référence</h3>
         
@@ -1174,11 +1091,9 @@ export default function App() {
         </div>
        </div>
 
-       {/* Decision */}
        <div className="lg:col-span-4">
         <div className="bg-white p-4 lg:p-6 rounded-lg border border-[#E5E7EB] flex flex-col gap-6">
          <h3 className="text-xl lg:text-2xl font-semibold text-black/88">Votre Décision Finale</h3>
-         
          <div className="flex items-baseline gap-4">
           <span className="text-4xl lg:text-[48px] font-bold text-[#0958D9] leading-none">120</span>
           <span className="text-sm lg:text-xl text-black/45">unités</span>
@@ -1222,14 +1137,11 @@ export default function App() {
     <MobileMenuButton className="bottom-64 right-6" />
     <MobileSidebar variant="detail" />
 
-    {/* Sidebar - Desktop */}
     <aside className="hidden lg:flex w-[310px] bg-white border-r border-[#D9D9D9] flex-col shrink-0">
      <Sidebar variant="detail" />
     </aside>
 
-    {/* Main Content */}
     <div className="flex-1 flex flex-col overflow-hidden bg-[#F8FBFF]/30">
-     {/* Header */}
      <header className="bg-white border-b border-[#0958D9] px-4 lg:px-6 py-3 lg:py-8 flex flex-col lg:flex-row lg:items-center justify-between shrink-0 gap-2 lg:gap-4">
       <div className="flex items-center justify-between lg:justify-start w-full lg:w-auto gap-4 lg:gap-6">
        <div className="flex items-center gap-2 lg:gap-6">
@@ -1253,7 +1165,6 @@ export default function App() {
         </div>
        </div>
 
-       {/* Mobile Allocation Total */}
        <div className="lg:hidden text-right shrink-0">
         <p className="text-[10px] text-[#4A5565] leading-none mb-0.5">Total</p>
         <p className="text-sm font-semibold leading-none">
@@ -1262,7 +1173,6 @@ export default function App() {
        </div>
       </div>
 
-      {/* Desktop Allocation Total */}
       <div className="hidden lg:block text-right">
        <p className="text-base text-[#4A5565] mb-2">Allocation Total</p>
        <p className="text-[28px] font-semibold">
@@ -1272,9 +1182,7 @@ export default function App() {
      </header>
 
      <div className="flex-1 flex flex-col lg:flex-row overflow-y-auto lg:overflow-hidden">
-      {/* Left Column - Boutique Grid */}
       <div className="flex-none lg:flex-1 lg:overflow-y-auto p-4 lg:p-6 space-y-6">
-       {/* Search and Filter */}
        <div className="space-y-6">
         <div className="flex flex-col lg:flex-row lg:items-center justify-between gap-4">
          <div className="relative w-full lg:w-[400px]">
@@ -1297,26 +1205,17 @@ export default function App() {
         <div className="flex items-center justify-between border-b border-[#F0F0F0]">
          <div className="flex items-center gap-4 lg:gap-8 overflow-x-auto no-scrollbar">
           {['Tout les boutiques', 'Paris', 'Lille', 'Nice', 'Lyon'].map((tab, i) => (
-           <button 
-            key={tab}
-            className={`pb-4 text-sm font-semibold relative whitespace-nowrap ${i === 0 ? 'text-[#0958D9]' : 'text-[#828282]'}`}
-           >
-            {tab}
-            {i === 0 && <div className="absolute bottom-0 left-0 right-0 h-0.5 bg-[#0958D9] rounded" />}
+           <button key={tab} className={`pb-4 text-sm font-semibold relative whitespace-nowrap ${i === 0 ? 'text-[#0958D9]' : 'text-[#828282]'}`}>
+            {tab} {i === 0 && <div className="absolute bottom-0 left-0 right-0 h-0.5 bg-[#0958D9] rounded" />}
            </button>
           ))}
           <button className="pb-4 text-sm text-[#828282] whitespace-nowrap flex items-center gap-1">
-           <Plus size={14} />
-           <span>Ajouter plus Tag</span>
+           <Plus size={14} /> <span>Ajouter plus Tag</span>
           </button>
          </div>
          <div className="hidden lg:flex items-center gap-2 pb-4">
-          <button className="p-2 bg-[#F5F5F5] rounded text-[#0958D9]">
-           <Grid size={20} />
-          </button>
-          <button className="p-2 text-black/45 hover:bg-slate-50 rounded">
-           <List size={20} />
-          </button>
+          <button className="p-2 bg-[#F5F5F5] rounded text-[#0958D9]"> <Grid size={20} /> </button>
+          <button className="p-2 text-black/45 hover:bg-slate-50 rounded"> <List size={20} /> </button>
          </div>
         </div>
        </div>
@@ -1324,14 +1223,8 @@ export default function App() {
        <div className="grid grid-cols-1 lg:grid-cols-2 gap-4 lg:gap-6">
         {BOUTIQUES.map((boutique, i) => (
          <div key={i} className="bg-white border border-[#D9D9D9] rounded-lg p-4 lg:p-6 space-y-4 shadow-sm">
-          {/* Top Section: Image + Info + Units */}
           <div className="flex gap-4">
-           <img 
-            src={boutique.img} 
-            alt={boutique.name} 
-            className="w-20 h-20 lg:w-24 lg:h-24 object-cover rounded"
-            referrerPolicy="no-referrer"
-           />
+           <img src={boutique.img} alt={boutique.name} className="w-20 h-20 lg:w-24 lg:h-24 object-cover rounded" referrerPolicy="no-referrer" />
            <div className="flex-1 min-w-0">
             <div className="flex justify-between items-start">
              <div>
@@ -1348,50 +1241,28 @@ export default function App() {
             </div>
            </div>
           </div>
-
-          {/* Stats Section: 3 Columns */}
           <div className="grid grid-cols-3 gap-2 pt-2">
-           <div>
-            <p className="text-[10px] lg:text-xs text-black/45 mb-1">Avg Weekly Sales</p>
-            <p className="text-sm lg:text-base font-bold">{boutique.avgSales}</p>
-            <p className="text-[10px] text-black/45">unités</p>
-           </div>
-           <div>
-            <p className="text-[10px] lg:text-xs text-black/45 mb-1">Daily Foot Traffic</p>
-            <p className="text-sm lg:text-base font-bold">{boutique.footTraffic}</p>
-            <p className="text-[10px] text-black/45">perso</p>
-           </div>
-           <div>
-            <p className="text-[10px] lg:text-xs text-black/45 mb-1">Performance</p>
-            <p className="text-sm lg:text-base font-bold">{boutique.performance}</p>
-            <p className="text-[10px] text-black/45">sur 100</p>
-           </div>
+           <div> <p className="text-[10px] lg:text-xs text-black/45 mb-1">Avg Weekly Sales</p> <p className="text-sm lg:text-base font-bold">{boutique.avgSales}</p> <p className="text-[10px] text-black/45">unités</p> </div>
+           <div> <p className="text-[10px] lg:text-xs text-black/45 mb-1">Daily Foot Traffic</p> <p className="text-sm lg:text-base font-bold">{boutique.footTraffic}</p> <p className="text-[10px] text-black/45">perso</p> </div>
+           <div> <p className="text-[10px] lg:text-xs text-black/45 mb-1">Performance</p> <p className="text-sm lg:text-base font-bold">{boutique.performance}</p> <p className="text-[10px] text-black/45">sur 100</p> </div>
           </div>
-
-          {/* Allocation Section */}
           <div className="pt-2">
            <div className="flex justify-between items-center mb-1">
             <span className="text-[10px] lg:text-xs text-black/45">Allocation %</span>
             <span className="text-[10px] lg:text-xs font-bold">{boutique.allocation}%</span>
            </div>
            <div className="w-full h-2 bg-[#F5F5F5] rounded-full overflow-hidden">
-            <div 
-             className="h-full bg-[#0958D9]" 
-             style={{ width: `${boutique.allocation}%` }}
-            />
+            <div className="h-full bg-[#0958D9]" style={{ width: `${boutique.allocation}%` }} />
            </div>
           </div>
          </div>
         ))}
        </div>
 
-       {/* Pagination */}
        <div className="hidden lg:flex items-center justify-between pt-8 pb-12">
         <div className="flex items-center gap-2">
          <span className="text-sm text-black/65">Page Total :</span>
-         <select className="border border-[#D9D9D9] rounded px-2 py-1 text-sm">
-          <option>6</option>
-         </select>
+         <select className="border border-[#D9D9D9] rounded px-2 py-1 text-sm"> <option>6</option> </select>
         </div>
         <div className="flex items-center gap-2">
          <button className="p-1 text-black/25"><ChevronLeft size={16} /></button>
@@ -1411,7 +1282,6 @@ export default function App() {
        </div>
       </div>
 
-      {/* Right Column - Finalization */}
       <div className="w-full lg:w-[400px] bg-white border-l border-[#D9D9D9] p-4 lg:p-8 lg:overflow-y-auto shrink-0 pb-80 lg:pb-8">
        <div className="space-y-8">
         <div className="space-y-6">
@@ -1427,14 +1297,7 @@ export default function App() {
            }}
            className="w-full py-2 lg:py-4 bg-[#0958D9] text-white rounded text-sm lg:text-base font-semibold hover:bg-blue-700 transition-all flex items-center justify-center gap-3"
           >
-           {exportingState === 'syncing' ? (
-            <>
-             <div className="w-4 h-4 lg:w-6 lg:h-6 border-4 border-white/30 border-t-white rounded-full animate-spin" />
-             Synchronisation...
-            </>
-           ) : (
-            'Envoyer vers l’ERP'
-           )}
+           {exportingState === 'syncing' ? ( <> <div className="w-4 h-4 lg:w-6 lg:h-6 border-4 border-white/30 border-t-white rounded-full animate-spin" /> Synchronisation... </> ) : ( 'Envoyer vers l’ERP' )}
           </button>
           <button 
            onClick={() => {
@@ -1463,26 +1326,13 @@ export default function App() {
          </div>
         </div>
 
-        {/* Bilan prévisionnel */}
         <div className="p-4 lg:p-8 bg-white border border-[#D9D9D9] rounded-xl space-y-8">
          <h3 className="text-lg lg:text-2xl font-semibold text-black/88">Bilan prévisionnel</h3>
          <div className="space-y-6">
-          <div className="flex justify-between items-center">
-           <span className="text-base lg:text-xl text-black/65">CA Prévu</span>
-           <span className="text-lg lg:text-2xl font-bold text-black/88">€19,800</span>
-          </div>
-          <div className="flex justify-between items-center">
-           <span className="text-base lg:text-xl text-black/65">Marge Bénéficiaire</span>
-           <span className="text-lg lg:text-2xl font-bold text-[#0958D9]">+38%</span>
-          </div>
-          <div className="flex justify-between items-center">
-           <span className="text-base lg:text-xl text-black/65">Filabilité Stock</span>
-           <span className="text-lg lg:text-2xl font-bold text-[#0958D9]">92%</span>
-          </div>
-          <div className="flex justify-between items-center">
-           <span className="text-base lg:text-xl text-black/65">Période de couverture</span>
-           <span className="text-lg lg:text-2xl font-bold text-black/88">7 Jours</span>
-          </div>
+          <div className="flex justify-between items-center"> <span className="text-base lg:text-xl text-black/65">CA Prévu</span> <span className="text-lg lg:text-2xl font-bold text-black/88">€19,800</span> </div>
+          <div className="flex justify-between items-center"> <span className="text-base lg:text-xl text-black/65">Marge Bénéficiaire</span> <span className="text-lg lg:text-2xl font-bold text-[#0958D9]">+38%</span> </div>
+          <div className="flex justify-between items-center"> <span className="text-base lg:text-xl text-black/65">Filabilité Stock</span> <span className="text-lg lg:text-2xl font-bold text-[#0958D9]">92%</span> </div>
+          <div className="flex justify-between items-center"> <span className="text-base lg:text-xl text-black/65">Période de couverture</span> <span className="text-lg lg:text-2xl font-bold text-black/88">7 Jours</span> </div>
          </div>
         </div>
        </div>
@@ -1490,59 +1340,24 @@ export default function App() {
      </div>
     </div>
 
-    {/* Export Overlay */}
     <AnimatePresence>
      {exportingState !== 'idle' && (
-      <motion.div 
-       initial={{ opacity: 0 }}
-       animate={{ opacity: 1 }}
-       exit={{ opacity: 0 }}
-       className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 backdrop-blur-sm p-6"
-      >
-       <motion.div 
-        initial={{ scale: 0.9, opacity: 0 }}
-        animate={{ scale: 1, opacity: 1 }}
-        exit={{ scale: 0.9, opacity: 0 }}
-        className="bg-white rounded-[32px] p-12 max-w-lg w-full shadow-2xl text-center space-y-8"
-       >
+      <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }} className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 backdrop-blur-sm p-6" >
+       <motion.div initial={{ scale: 0.9, opacity: 0 }} animate={{ scale: 1, opacity: 1 }} exit={{ scale: 0.9, opacity: 0 }} className="bg-white rounded-[32px] p-12 max-w-lg w-full shadow-2xl text-center space-y-8" >
         {exportingState === 'downloading' ? (
          <>
           <div className="w-24 h-24 bg-[#F8FBFF] rounded-full flex items-center justify-center mx-auto relative">
-           <motion.div 
-            animate={{ rotate: 360 }}
-            transition={{ duration: 2, repeat: Infinity, ease: "linear" }}
-            className="absolute inset-0 border-4 border-[#0958D9] border-t-transparent rounded-full"
-           />
+           <motion.div animate={{ rotate: 360 }} transition={{ duration: 2, repeat: Infinity, ease: "linear" }} className="absolute inset-0 border-4 border-[#0958D9] border-t-transparent rounded-full" />
            <UploadCloud size={40} className="text-[#0958D9]" />
           </div>
-          <div>
-           <h2 className="text-3xl font-semibold text-black mb-2">Préparation du fichier...</h2>
-           <p className="text-xl text-black/45">Votre export CSV est en cours de génération.</p>
-          </div>
-          <div className="h-2 bg-[#F5F5F5] rounded-full overflow-hidden">
-           <motion.div 
-            initial={{ width: 0 }}
-            animate={{ width: "100%" }}
-            transition={{ duration: 2 }}
-            className="h-full bg-[#0958D9]"
-           />
-          </div>
+          <div> <h2 className="text-3xl font-semibold text-black mb-2">Préparation du fichier...</h2> <p className="text-xl text-black/45">Votre export CSV est en cours de génération.</p> </div>
+          <div className="h-2 bg-[#F5F5F5] rounded-full overflow-hidden"> <motion.div initial={{ width: 0 }} animate={{ width: "100%" }} transition={{ duration: 2 }} className="h-full bg-[#0958D9]" /> </div>
          </>
         ) : (
          <>
-          <div className="w-24 h-24 bg-green-50 rounded-full flex items-center justify-center mx-auto">
-           <CheckCircle2 size={48} className="text-green-500" />
-          </div>
-          <div>
-           <h2 className="text-3xl font-semibold text-black mb-2">Export Réussi !</h2>
-           <p className="text-xl text-black/45">Le fichier <span className="font-semibold text-black">boutique_distribution.csv</span> a été téléchargé avec succès.</p>
-          </div>
-          <button 
-           onClick={() => setExportingState('idle')}
-           className="w-full py-4 bg-[#0958D9] text-white rounded-xl text-xl font-semibold hover:bg-blue-700 transition-all shadow-lg shadow-blue-500/20"
-          >
-           Fermer
-          </button>
+          <div className="w-24 h-24 bg-green-50 rounded-full flex items-center justify-center mx-auto"> <CheckCircle2 size={48} className="text-green-500" /> </div>
+          <div> <h2 className="text-3xl font-semibold text-black mb-2">Export Réussi !</h2> <p className="text-xl text-black/45">Le fichier <span className="font-semibold text-black">boutique_distribution.csv</span> a été téléchargé avec succès.</p> </div>
+          <button onClick={() => setExportingState('idle')} className="w-full py-4 bg-[#0958D9] text-white rounded-xl text-xl font-semibold hover:bg-blue-700 transition-all shadow-lg shadow-blue-500/20" > Fermer </button>
          </>
         )}
        </motion.div>
@@ -1556,68 +1371,22 @@ export default function App() {
  if (state.step === 'email-success') {
   return (
    <div className="min-h-screen bg-[#F8FBFF] flex items-center justify-center p-6">
-    <motion.div 
-     initial={{ opacity: 0, y: 30 }}
-     animate={{ opacity: 1, y: 0 }}
-     className="max-w-2xl w-full bg-white rounded-[40px] p-16 shadow-2xl border border-blue-100 text-center space-y-10 relative overflow-hidden"
-    >
-     <div className="absolute top-0 right-0 p-8 opacity-5">
-      <Mail size={200} />
-     </div>
-
+    <motion.div initial={{ opacity: 0, y: 30 }} animate={{ opacity: 1, y: 0 }} className="max-w-2xl w-full bg-white rounded-[40px] p-16 shadow-2xl border border-blue-100 text-center space-y-10 relative overflow-hidden" >
+     <div className="absolute top-0 right-0 p-8 opacity-5"> <Mail size={200} /> </div>
      <div className="relative mx-auto w-32 h-32">
-      <motion.div 
-       initial={{ scale: 0 }}
-       animate={{ scale: 1 }}
-       transition={{ type: "spring", damping: 12, stiffness: 200 }}
-       className="w-full h-full bg-blue-50 rounded-full flex items-center justify-center"
-      >
-       <Send size={56} className="text-[#0958D9] -rotate-12" />
-      </motion.div>
-      <motion.div 
-       initial={{ x: -20, y: 20, opacity: 0 }}
-       animate={{ x: 0, y: 0, opacity: 1 }}
-       transition={{ delay: 0.4, duration: 0.6 }}
-       className="absolute -top-2 -right-2 w-12 h-12 bg-green-500 rounded-full border-4 border-white flex items-center justify-center"
-      >
-       <Check size={24} className="text-white" />
-      </motion.div>
+      <motion.div initial={{ scale: 0 }} animate={{ scale: 1 }} transition={{ type: "spring", damping: 12, stiffness: 200 }} className="w-full h-full bg-blue-50 rounded-full flex items-center justify-center" > <Send size={56} className="text-[#0958D9] -rotate-12" /> </motion.div>
+      <motion.div initial={{ x: -20, y: 20, opacity: 0 }} animate={{ x: 0, y: 0, opacity: 1 }} transition={{ delay: 0.4, duration: 0.6 }} className="absolute -top-2 -right-2 w-12 h-12 bg-green-500 rounded-full border-4 border-white flex items-center justify-center" > <Check size={24} className="text-white" /> </motion.div>
      </div>
-
-     <div className="space-y-4">
-      <h2 className="text-4xl font-bold text-slate-900 tracking-tight">E-mail envoyé !</h2>
-      <p className="text-xl text-slate-500 leading-relaxed">
-       Le rapport détaillé des prévisions a été envoyé à l'adresse :<br />
-       <span className="text-slate-900 font-semibold">yeddazhang.fr@gmail.com</span>
-      </p>
-     </div>
-
+     <div className="space-y-4"> <h2 className="text-4xl font-bold text-slate-900 tracking-tight">E-mail envoyé !</h2> <p className="text-xl text-slate-500 leading-relaxed"> Le rapport détaillé des prévisions a été envoyé à l'adresse :<br /> <span className="text-slate-900 font-semibold">yeddazhang.fr@gmail.com</span> </p> </div>
      <div className="bg-slate-50 rounded-2xl p-6 border border-slate-100 text-left space-y-4">
       <div className="flex items-start gap-4">
-       <div className="w-10 h-10 bg-white rounded-xl flex items-center justify-center shadow-sm border border-slate-100">
-        <FileText size={20} className="text-slate-400" />
-       </div>
-       <div>
-        <p className="text-sm font-bold text-slate-900">Rapport_Previsions_2026.pdf</p>
-        <p className="text-xs text-slate-400">Pièce jointe • 2.4 MB</p>
-       </div>
+       <div className="w-10 h-10 bg-white rounded-xl flex items-center justify-center shadow-sm border border-slate-100"> <FileText size={20} className="text-slate-400" /> </div>
+       <div> <p className="text-sm font-bold text-slate-900">Rapport_Previsions_2026.pdf</p> <p className="text-xs text-slate-400">Pièce jointe • 2.4 MB</p> </div>
       </div>
      </div>
-
      <div className="pt-6 space-y-4">
-      <button 
-       onClick={() => setState(prev => ({ ...prev, step: 'dashboard' }))}
-       className="w-full py-5 bg-[#0958D9] text-white rounded-2xl text-xl font-bold hover:bg-blue-700 transition-all shadow-xl shadow-blue-500/20 flex items-center justify-center gap-3"
-      >
-       Retour au Dashboard
-       <ArrowRight size={24} />
-      </button>
-      <button 
-       onClick={() => setState(prev => ({ ...prev, step: 'boutique-distribution' }))}
-       className="w-full py-4 bg-white text-slate-500 rounded-2xl text-lg font-semibold hover:bg-slate-50 transition-all border border-slate-200"
-      >
-       Envoyer à une autre adresse
-      </button>
+      <button onClick={() => setState(prev => ({ ...prev, step: 'dashboard' }))} className="w-full py-5 bg-[#0958D9] text-white rounded-2xl text-xl font-bold hover:bg-blue-700 transition-all shadow-xl shadow-blue-500/20 flex items-center justify-center gap-3" > Retour au Dashboard <ArrowRight size={24} /> </button>
+      <button onClick={() => setState(prev => ({ ...prev, step: 'boutique-distribution' }))} className="w-full py-4 bg-white text-slate-500 rounded-2xl text-lg font-semibold hover:bg-slate-50 transition-all border border-slate-200" > Envoyer à une autre adresse </button>
      </div>
     </motion.div>
    </div>
@@ -1627,68 +1396,21 @@ export default function App() {
  if (state.step === 'download-success') {
   return (
    <div className="min-h-screen bg-[#F8FBFF] flex items-center justify-center p-6">
-    <motion.div 
-     initial={{ opacity: 0, scale: 0.95 }}
-     animate={{ opacity: 1, scale: 1 }}
-     className="max-w-3xl w-full bg-white rounded-[48px] p-20 shadow-2xl border border-blue-100 text-center space-y-12 relative overflow-hidden"
-    >
-     {/* Decorative background element */}
+    <motion.div initial={{ opacity: 0, scale: 0.95 }} animate={{ opacity: 1, scale: 1 }} className="max-w-3xl w-full bg-white rounded-[48px] p-20 shadow-2xl border border-blue-100 text-center space-y-12 relative overflow-hidden" >
      <div className="absolute top-0 left-0 w-full h-2 bg-gradient-to-r from-[#0958D9] via-blue-400 to-[#0958D9]" />
-     
      <div className="relative mx-auto w-40 h-40">
-      <motion.div 
-       initial={{ scale: 0, rotate: -45 }}
-       animate={{ scale: 1, rotate: 0 }}
-       transition={{ type: "spring", damping: 15, stiffness: 200 }}
-       className="w-full h-full bg-[#E6F4FF] rounded-full flex items-center justify-center"
-      >
-       <FileSpreadsheet size={80} className="text-[#0958D9]" />
-      </motion.div>
-      <motion.div 
-       initial={{ opacity: 0, scale: 0 }}
-       animate={{ opacity: 1, scale: 1 }}
-       transition={{ delay: 0.5 }}
-       className="absolute -bottom-2 -right-2 w-16 h-16 bg-green-500 rounded-full border-8 border-white flex items-center justify-center"
-      >
-       <Check size={32} className="text-white" />
-      </motion.div>
+      <motion.div initial={{ scale: 0, rotate: -45 }} animate={{ scale: 1, rotate: 0 }} transition={{ type: "spring", damping: 15, stiffness: 200 }} className="w-full h-full bg-[#E6F4FF] rounded-full flex items-center justify-center" > <FileSpreadsheet size={80} className="text-[#0958D9]" /> </motion.div>
+      <motion.div initial={{ opacity: 0, scale: 0 }} animate={{ opacity: 1, scale: 1 }} transition={{ delay: 0.5 }} className="absolute -bottom-2 -right-2 w-16 h-16 bg-green-500 rounded-full border-8 border-white flex items-center justify-center" > <Check size={32} className="text-white" /> </motion.div>
      </div>
-
-     <div className="space-y-6">
-      <h2 className="text-5xl font-bold text-slate-900 tracking-tight">Export CSV Réussi</h2>
-      <p className="text-2xl text-slate-500 max-w-xl mx-auto leading-relaxed">
-       Votre fichier <span className="text-[#0958D9] font-bold">boutique_distribution.csv</span> est prêt et a été téléchargé.
-      </p>
-     </div>
-
+     <div className="space-y-6"> <h2 className="text-5xl font-bold text-slate-900 tracking-tight">Export CSV Réussi</h2> <p className="text-2xl text-slate-500 max-w-xl mx-auto leading-relaxed"> Votre fichier <span className="text-[#0958D9] font-bold">boutique_distribution.csv</span> est prêt et a été téléchargé. </p> </div>
      <div className="grid grid-cols-3 gap-6">
-      <div className="bg-slate-50 rounded-3xl p-6 border border-slate-100">
-       <p className="text-sm text-slate-400 font-bold uppercase tracking-widest mb-2">Format</p>
-       <p className="text-xl font-bold text-slate-900">CSV (UTF-8)</p>
-      </div>
-      <div className="bg-slate-50 rounded-3xl p-6 border border-slate-100">
-       <p className="text-sm text-slate-400 font-bold uppercase tracking-widest mb-2">Taille</p>
-       <p className="text-xl font-bold text-slate-900">1.2 MB</p>
-      </div>
-      <div className="bg-slate-50 rounded-3xl p-6 border border-slate-100">
-       <p className="text-sm text-slate-400 font-bold uppercase tracking-widest mb-2">Lignes</p>
-       <p className="text-xl font-bold text-slate-900">1,240</p>
-      </div>
+      <div className="bg-slate-50 rounded-3xl p-6 border border-slate-100"> <p className="text-sm text-slate-400 font-bold uppercase tracking-widest mb-2">Format</p> <p className="text-xl font-bold text-slate-900">CSV (UTF-8)</p> </div>
+      <div className="bg-slate-50 rounded-3xl p-6 border border-slate-100"> <p className="text-sm text-slate-400 font-bold uppercase tracking-widest mb-2">Taille</p> <p className="text-xl font-bold text-slate-900">1.2 MB</p> </div>
+      <div className="bg-slate-50 rounded-3xl p-6 border border-slate-100"> <p className="text-sm text-slate-400 font-bold uppercase tracking-widest mb-2">Lignes</p> <p className="text-xl font-bold text-slate-900">1,240</p> </div>
      </div>
-
      <div className="pt-8 flex flex-col sm:flex-row gap-4 justify-center">
-      <button 
-       onClick={() => setState(prev => ({ ...prev, step: 'boutique-distribution' }))}
-       className="px-12 py-5 bg-[#0958D9] text-white rounded-2xl text-xl font-bold hover:bg-blue-700 transition-all shadow-xl shadow-blue-500/20 flex items-center justify-center gap-3"
-      >
-       Retour à la liste
-      </button>
-      <button 
-       onClick={() => setState(prev => ({ ...prev, step: 'dashboard' }))}
-       className="px-12 py-5 bg-white text-slate-600 rounded-2xl text-xl font-bold hover:bg-slate-50 transition-all border border-slate-200"
-      >
-       Tableau de bord
-      </button>
+      <button onClick={() => setState(prev => ({ ...prev, step: 'boutique-distribution' }))} className="px-12 py-5 bg-[#0958D9] text-white rounded-2xl text-xl font-bold hover:bg-blue-700 transition-all shadow-xl shadow-blue-500/20 flex items-center justify-center gap-3" > Retour à la liste </button>
+      <button onClick={() => setState(prev => ({ ...prev, step: 'dashboard' }))} className="px-12 py-5 bg-white text-slate-600 rounded-2xl text-xl font-bold hover:bg-slate-50 transition-all border border-slate-200" > Tableau de bord </button>
      </div>
     </motion.div>
    </div>
@@ -1698,98 +1420,31 @@ export default function App() {
  if (state.step === 'export-success') {
   return (
    <div className="min-h-screen bg-[#F8FBFF] flex items-center justify-center p-6">
-    <motion.div 
-     initial={{ opacity: 0, scale: 0.9 }}
-     animate={{ opacity: 1, scale: 1 }}
-     className="max-w-3xl w-full bg-white rounded-[48px] p-20 shadow-2xl border border-blue-100 text-center space-y-12 relative overflow-hidden"
-    >
-     {/* Animated background patterns */}
+    <motion.div initial={{ opacity: 0, scale: 0.9 }} animate={{ opacity: 1, scale: 1 }} className="max-w-3xl w-full bg-white rounded-[48px] p-20 shadow-2xl border border-blue-100 text-center space-y-12 relative overflow-hidden" >
      <div className="absolute top-0 left-0 w-full h-2 bg-gradient-to-r from-green-400 via-emerald-500 to-green-400" />
      <div className="absolute -right-20 -top-20 w-64 h-64 bg-green-50 rounded-full opacity-50 blur-3xl" />
-     
      <div className="relative mx-auto w-40 h-40">
-      <motion.div 
-       initial={{ scale: 0 }}
-       animate={{ scale: 1 }}
-       transition={{ type: "spring", damping: 12, stiffness: 200 }}
-       className="w-full h-full bg-green-50 rounded-full flex items-center justify-center"
-      >
-       <Database size={80} className="text-green-600" />
-      </motion.div>
-      <motion.div 
-       initial={{ opacity: 0, scale: 0 }}
-       animate={{ opacity: 1, scale: 1 }}
-       transition={{ delay: 0.5 }}
-       className="absolute -bottom-2 -right-2 w-16 h-16 bg-green-500 rounded-full border-8 border-white flex items-center justify-center"
-      >
-       <Check size={32} className="text-white" />
-      </motion.div>
-      
-      {/* Connection lines animation */}
-      <motion.div 
-       animate={{ 
-        scale: [1, 1.1, 1],
-        opacity: [0.3, 0.6, 0.3]
-       }}
-       transition={{ duration: 3, repeat: Infinity }}
-       className="absolute inset-0 border-4 border-green-200 rounded-full -m-4"
-      />
+      <motion.div initial={{ scale: 0 }} animate={{ scale: 1 }} transition={{ type: "spring", damping: 12, stiffness: 200 }} className="w-full h-full bg-green-50 rounded-full flex items-center justify-center" > <Database size={80} className="text-green-600" /> </motion.div>
+      <motion.div initial={{ opacity: 0, scale: 0 }} animate={{ opacity: 1, scale: 1 }} transition={{ delay: 0.5 }} className="absolute -bottom-2 -right-2 w-16 h-16 bg-green-500 rounded-full border-8 border-white flex items-center justify-center" > <Check size={32} className="text-white" /> </motion.div>
+      <motion.div animate={{ scale: [1, 1.1, 1], opacity: [0.3, 0.6, 0.3] }} transition={{ duration: 3, repeat: Infinity }} className="absolute inset-0 border-4 border-green-200 rounded-full -m-4" />
      </div>
-
-     <div className="space-y-6">
-      <h2 className="text-5xl font-bold text-slate-900 tracking-tight">Synchronisation Réussie</h2>
-      <p className="text-2xl text-slate-500 max-w-xl mx-auto leading-relaxed">
-       Vos prévisions ont été injectées dans <span className="text-green-600 font-bold">ERP Central</span>. 
-       Les stocks seront mis à jour dans <span className="font-bold text-slate-900">5 minutes</span>.
-      </p>
-     </div>
-
+     <div className="space-y-6"> <h2 className="text-5xl font-bold text-slate-900 tracking-tight">Synchronisation Réussie</h2> <p className="text-2xl text-slate-500 max-w-xl mx-auto leading-relaxed"> Vos prévisions ont été injectées dans <span className="text-green-600 font-bold">ERP Central</span>. Les stocks seront mis à jour dans <span className="font-bold text-slate-900">5 minutes</span>. </p> </div>
      <div className="bg-slate-50 rounded-[32px] p-10 border border-slate-100 space-y-6 text-left">
       <div className="flex items-center justify-between border-b border-slate-200 pb-4">
        <div className="flex items-center gap-4">
-        <div className="w-12 h-12 bg-white rounded-2xl flex items-center justify-center shadow-sm">
-         <TrendingUp size={24} className="text-blue-500" />
-        </div>
-        <div>
-         <p className="text-sm text-slate-400 font-bold uppercase tracking-wider">Référence Flux</p>
-         <p className="text-xl font-bold text-slate-900">ERP-SYNC-2026-0042</p>
-        </div>
+        <div className="w-12 h-12 bg-white rounded-2xl flex items-center justify-center shadow-sm"> <TrendingUp size={24} className="text-blue-500" /> </div>
+        <div> <p className="text-sm text-slate-400 font-bold uppercase tracking-wider">Référence Flux</p> <p className="text-xl font-bold text-slate-900">ERP-SYNC-2026-0042</p> </div>
        </div>
-       <div className="text-right">
-        <p className="text-sm text-slate-400 font-bold uppercase tracking-wider">Statut</p>
-        <span className="inline-flex items-center gap-2 px-4 py-1.5 bg-green-100 text-green-700 rounded-full font-bold text-sm">
-         <div className="w-2 h-2 bg-green-500 rounded-full animate-ping" />
-         Actif
-        </span>
-       </div>
+       <div className="text-right"> <p className="text-sm text-slate-400 font-bold uppercase tracking-wider">Statut</p> <span className="inline-flex items-center gap-2 px-4 py-1.5 bg-green-100 text-green-700 rounded-full font-bold text-sm"> <div className="w-2 h-2 bg-green-500 rounded-full animate-ping" /> Actif </span> </div>
       </div>
-      
       <div className="grid grid-cols-2 gap-8 pt-2">
-       <div>
-        <p className="text-sm text-slate-400 font-bold uppercase tracking-wider mb-1">Articles Impactés</p>
-        <p className="text-2xl font-bold text-slate-900">1,240 SKUs</p>
-       </div>
-       <div>
-        <p className="text-sm text-slate-400 font-bold uppercase tracking-wider mb-1">Entrepôt Cible</p>
-        <p className="text-2xl font-bold text-slate-900">Logistique Nord</p>
-       </div>
+       <div> <p className="text-sm text-slate-400 font-bold uppercase tracking-wider mb-1">Articles Impactés</p> <p className="text-2xl font-bold text-slate-900">1,240 SKUs</p> </div>
+       <div> <p className="text-sm text-slate-400 font-bold uppercase tracking-wider mb-1">Entrepôt Cible</p> <p className="text-2xl font-bold text-slate-900">Logistique Nord</p> </div>
       </div>
      </div>
-
      <div className="pt-8 flex flex-col sm:flex-row gap-4 justify-center">
-      <button 
-       onClick={() => setState(prev => ({ ...prev, step: 'dashboard' }))}
-       className="px-12 py-5 bg-[#0958D9] text-white rounded-2xl text-xl font-bold hover:bg-blue-700 transition-all shadow-xl shadow-blue-500/20 flex items-center justify-center gap-3"
-      >
-       Retour au Dashboard
-       <ArrowRight size={24} />
-      </button>
-      <button 
-       onClick={() => window.print()}
-       className="px-12 py-5 bg-white text-slate-600 rounded-2xl text-xl font-bold hover:bg-slate-50 transition-all border border-slate-200"
-      >
-       Imprimer le reçu
-      </button>
+      <button onClick={() => setState(prev => ({ ...prev, step: 'dashboard' }))} className="px-12 py-5 bg-[#0958D9] text-white rounded-2xl text-xl font-bold hover:bg-blue-700 transition-all shadow-xl shadow-blue-500/20 flex items-center justify-center gap-3" > Retour au Dashboard <ArrowRight size={24} /> </button>
+      <button onClick={() => window.print()} className="px-12 py-5 bg-white text-slate-600 rounded-2xl text-xl font-bold hover:bg-slate-50 transition-all border border-slate-200" > Imprimer le reçu </button>
      </div>
     </motion.div>
    </div>
@@ -1799,77 +1454,34 @@ export default function App() {
  if (state.step === 'login') {
   return (
    <div className="min-h-screen bg-white flex">
-    {/* Left Side - Image/Brand Area */}
     <div className="hidden lg:flex lg:w-1/2 bg-[#f0f7ff] flex-col justify-end p-16 relative overflow-hidden">
      <div className="relative z-10">
       <div className="flex items-center gap-4">
-       <img 
-        src={LOGO_URL} 
-        alt="Smart Retail Logo" 
-        className="w-16 h-16 object-contain"
-        referrerPolicy="no-referrer"
-       />
+       <img src={LOGO_URL} alt="Smart Retail Logo" className="w-16 h-16 object-contain" referrerPolicy="no-referrer" />
        <span className="text-3xl font-bold tracking-tight text-slate-900">SMART RETAIL</span>
       </div>
      </div>
-     
-     {/* Abstract background elements */}
-     <div className="absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 w-[150%] h-[150%] opacity-10">
-      <div className="absolute top-0 left-0 w-full h-full border-[100px] border-blue-500 rounded-full animate-pulse"></div>
-     </div>
+     <div className="absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 w-[150%] h-[150%] opacity-10"> <div className="absolute top-0 left-0 w-full h-full border-[100px] border-blue-500 rounded-full animate-pulse"></div> </div>
     </div>
-
-    {/* Right Side - Login Form */}
     <div className="w-full lg:w-1/2 flex items-center justify-center p-8">
-     <motion.div 
-      initial={{ opacity: 0, y: 20 }}
-      animate={{ opacity: 1, y: 0 }}
-      className="max-w-md w-full"
-     >
+     <motion.div initial={{ opacity: 0, y: 20 }} animate={{ opacity: 1, y: 0 }} className="max-w-md w-full" >
       <h1 className="text-4xl font-bold text-[#003399] mb-2">Bienvenue</h1>
       <p className="text-slate-500 mb-10">Connectez-vous pour commencer l'onboarding.</p>
-
       <form onSubmit={handleLogin} className="space-y-6">
        <div>
         <label className="block text-sm font-medium text-slate-700 mb-2">E-mail</label>
-        <input 
-         type="email" 
-         placeholder="Votre@email.com"
-         className="w-full px-4 py-3 bg-[#f8fbff] border-l-4 border-l-[#0055ff] border-y border-r border-slate-100 rounded-r-lg focus:outline-none focus:ring-2 focus:ring-blue-500/20 transition-all"
-         required
-         pattern="[a-z0-9._%+-]+@[a-z0-9.-]+\.[a-z]{2,}$"
-         title="Veuillez entrer une adresse e-mail valide (ex: nom@domaine.com)"
-        />
+        <input type="email" placeholder="Votre@email.com" className="w-full px-4 py-3 bg-[#f8fbff] border-l-4 border-l-[#0055ff] border-y border-r border-slate-100 rounded-r-lg focus:outline-none focus:ring-2 focus:ring-blue-500/20 transition-all" required pattern="[a-z0-9._%+-]+@[a-z0-9.-]+\.[a-z]{2,}$" title="Veuillez entrer une adresse e-mail valide (ex: nom@domaine.com)" />
        </div>
-
        <div>
         <label className="block text-sm font-medium text-slate-700 mb-2">Mot de passe</label>
-        <input 
-         type="password" 
-         placeholder="........."
-         className="w-full px-4 py-3 bg-[#f8fbff] border-l-4 border-l-[#0055ff] border-y border-r border-slate-100 rounded-r-lg focus:outline-none focus:ring-2 focus:ring-blue-500/20 transition-all"
-         required
-        />
+        <input type="password" placeholder="........." className="w-full px-4 py-3 bg-[#f8fbff] border-l-4 border-l-[#0055ff] border-y border-r border-slate-100 rounded-r-lg focus:outline-none focus:ring-2 focus:ring-blue-500/20 transition-all" required />
        </div>
-
        <div className="flex items-center justify-between">
-        <label className="flex items-center gap-2 cursor-pointer group">
-         <input type="checkbox" className="w-4 h-4 rounded border-slate-300 text-blue-600 focus:ring-blue-500" />
-         <span className="text-sm text-slate-600 group-hover:text-slate-900 transition-colors">Se souvenir de moi</span>
-        </label>
+        <label className="flex items-center gap-2 cursor-pointer group"> <input type="checkbox" className="w-4 h-4 rounded border-slate-300 text-blue-600 focus:ring-blue-500" /> <span className="text-sm text-slate-600 group-hover:text-slate-900 transition-colors">Se souvenir de moi</span> </label>
         <a href="#" className="text-sm text-blue-600 hover:underline">Mot de passe oublié?</a>
        </div>
-
-       <button 
-        type="submit"
-        className="w-full bg-[#0958D9] text-white font-semibold py-4 rounded-lg hover:bg-blue-700 transition-all shadow-lg shadow-blue-500/20 active:scale-[0.98]"
-       >
-        Se connecter
-       </button>
-
-       <p className="text-center text-sm text-slate-500">
-        Vous n'avez pas de compte? <a href="#" className="text-blue-600 font-medium hover:underline">Inscrivez-vous</a>
-       </p>
+       <button type="submit" className="w-full bg-[#0958D9] text-white font-semibold py-4 rounded-lg hover:bg-blue-700 transition-all shadow-lg shadow-blue-500/20 active:scale-[0.98]" > Se connecter </button>
+       <p className="text-center text-sm text-slate-500"> Vous n'avez pas de compte? <a href="#" className="text-blue-600 font-medium hover:underline">Inscrivez-vous</a> </p>
       </form>
      </motion.div>
     </div>
@@ -1879,60 +1491,32 @@ export default function App() {
 
  return (
   <div className="min-h-screen bg-[#f4f7fa] font-sans text-slate-900">
-   {/* Header */}
    <header className="bg-white border-b border-slate-200 px-8 py-4 flex items-center justify-between sticky top-0 z-50">
     <div className="flex items-center gap-3">
-     <img 
-      src={LOGO_URL} 
-      alt="Smart Retail Logo" 
-      className="w-10 h-10 object-contain"
-      referrerPolicy="no-referrer"
-     />
+     <img src={LOGO_URL} alt="Smart Retail Logo" className="w-10 h-10 object-contain" referrerPolicy="no-referrer" />
      <span className="text-xl font-bold tracking-tight">SMART RETAIL</span>
     </div>
     <div className="flex items-center gap-6">
      <span className="text-sm text-slate-400">Configuration initiale</span>
-     <button 
-      onClick={() => setState(prev => ({ ...prev, step: 'login' }))}
-      className="p-2 text-slate-400 hover:text-slate-600 transition-colors"
-     >
-      <LogOut size={20} />
-     </button>
+     <button onClick={() => setState(prev => ({ ...prev, step: 'login' }))} className="p-2 text-slate-400 hover:text-slate-600 transition-colors" > <LogOut size={20} /> </button>
     </div>
    </header>
 
    <main className="max-w-[1600px] mx-auto p-8 grid grid-cols-1 lg:grid-cols-12 gap-8 items-start">
-    {/* Left Column - Forms */}
     <div className="lg:col-span-7 space-y-8">
-     {/* Welcome Section */}
      <section className="bg-white rounded-2xl p-8 border border-slate-200 shadow-sm">
       <h2 className="text-3xl font-bold text-[#003399] mb-2">Bienvenue sur Smart Retail</h2>
       <p className="text-slate-500 mb-8">Configurez votre système intelligent de prévision des ventes</p>
-
       <div className="space-y-6">
        <div>
         <h3 className="text-lg font-bold mb-1">Profil de l'enseigne</h3>
         <p className="text-sm text-slate-500 mb-6">Remplissez les informations ci-dessous pour personnaliser votre expérience et optimiser la gestion de votre commerce.</p>
-        
         <div className="grid grid-cols-2 gap-6">
-         <div>
-          <label className="block text-[10px] font-bold text-slate-400 uppercase tracking-wider mb-2">Nom de l'entreprise</label>
-          <input 
-           type="text" 
-           placeholder="Ex: Mode & Co"
-           value={state.profile.name}
-           onChange={(e) => setState(prev => ({ ...prev, profile: { ...prev.profile, name: e.target.value } }))}
-           className="w-full px-4 py-3 bg-white border border-slate-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500/20 transition-all"
-          />
-         </div>
+         <div> <label className="block text-[10px] font-bold text-slate-400 uppercase tracking-wider mb-2">Nom de l'entreprise</label> <input type="text" placeholder="Ex: Mode & Co" value={state.profile.name} onChange={(e) => setState(prev => ({ ...prev, profile: { ...prev.profile, name: e.target.value } }))} className="w-full px-4 py-3 bg-white border border-slate-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500/20 transition-all" /> </div>
          <div>
           <label className="block text-[10px] font-bold text-slate-400 uppercase tracking-wider mb-2">Secteur d'activité</label>
           <div className="relative">
-           <select 
-            value={state.profile.sector}
-            onChange={(e) => setState(prev => ({ ...prev, profile: { ...prev.profile, sector: e.target.value } }))}
-            className="w-full px-4 py-3 bg-white border border-slate-200 rounded-lg appearance-none focus:outline-none focus:ring-2 focus:ring-blue-500/20 transition-all"
-           >
+           <select value={state.profile.sector} onChange={(e) => setState(prev => ({ ...prev, profile: { ...prev.profile, sector: e.target.value } }))} className="w-full px-4 py-3 bg-white border border-slate-200 rounded-lg appearance-none focus:outline-none focus:ring-2 focus:ring-blue-500/20 transition-all" >
             <option value="">Sélectionnez</option>
             {SECTORS.map(s => <option key={s} value={s}>{s}</option>)}
            </select>
@@ -1944,231 +1528,63 @@ export default function App() {
       </div>
      </section>
 
-     {/* Objectives Section */}
      <section className="bg-white rounded-2xl p-8 border border-slate-200 shadow-sm">
       <h3 className="text-xl font-bold mb-2">Définissez vos objectifs</h3>
       <p className="text-sm text-slate-500 mb-8">Ces informations personnaliseront vos prévisions</p>
-
       <div className="flex flex-wrap gap-3 mb-8">
        {GOALS.map(goal => (
-        <button
-         key={goal.id}
-         onClick={() => toggleGoal(goal.id)}
-         className={`px-4 py-2 rounded-lg text-sm font-medium transition-all border ${
-          state.objectives.selectedGoals.includes(goal.id)
-           ? 'bg-[#0958D9] text-white border-[#0958D9]'
-           : 'bg-[#f8fbff] text-slate-600 border-slate-100 hover:border-slate-300'
-         }`}
-        >
-         {goal.label}
-        </button>
+        <button key={goal.id} onClick={() => toggleGoal(goal.id)} className={`px-4 py-2 rounded-lg text-sm font-medium transition-all border ${ state.objectives.selectedGoals.includes(goal.id) ? 'bg-[#0958D9] text-white border-[#0958D9]' : 'bg-[#f8fbff] text-slate-600 border-slate-100 hover:border-slate-300' }`} > {goal.label} </button>
        ))}
       </div>
-
       <div className="grid grid-cols-2 gap-8">
        <div className="space-y-6">
-        <div>
-         <label className="flex items-center gap-2 text-[10px] font-bold text-slate-400 uppercase tracking-wider mb-2">
-          <TrendingUp size={14} className="text-blue-500" /> Objectif de ventes (7 jours)
-         </label>
-         <div className="relative">
-          <span className="absolute left-4 top-1/2 -translate-y-1/2 text-slate-400 text-sm">€</span>
-          <input 
-           type="number" 
-           min="0"
-           placeholder="42850"
-           value={state.objectives.salesTarget}
-           onChange={(e) => setState(prev => ({ ...prev, objectives: { ...prev.objectives, salesTarget: e.target.value } }))}
-           className="w-full pl-8 pr-4 py-3 bg-white border border-slate-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500/20 transition-all"
-          />
-         </div>
-         <p className="text-[10px] text-slate-400 mt-1">CA souhaité pour la semaine prochaine</p>
-        </div>
-
-        <div>
-         <label className="flex items-center gap-2 text-[10px] font-bold text-slate-400 uppercase tracking-wider mb-2">
-          <Package size={14} className="text-purple-500" /> Niveau de stock optimal
-         </label>
-         <input 
-          type="number" 
-          min="0"
-          placeholder="57"
-          value={state.objectives.optimalStock}
-          onChange={(e) => setState(prev => ({ ...prev, objectives: { ...prev.objectives, optimalStock: e.target.value } }))}
-          className="w-full px-4 py-3 bg-white border border-slate-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500/20 transition-all"
-         />
-         <p className="text-[10px] text-slate-400 mt-1">Nombre de SKUs à maintenir en stock</p>
-        </div>
+        <div> <label className="flex items-center gap-2 text-[10px] font-bold text-slate-400 uppercase tracking-wider mb-2"> <TrendingUp size={14} className="text-blue-500" /> Objectif de ventes (7 jours) </label> <div className="relative"> <span className="absolute left-4 top-1/2 -translate-y-1/2 text-slate-400 text-sm">€</span> <input type="number" min="0" placeholder="42850" value={state.objectives.salesTarget} onChange={(e) => setState(prev => ({ ...prev, objectives: { ...prev.objectives, salesTarget: e.target.value } }))} className="w-full pl-8 pr-4 py-3 bg-white border border-slate-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500/20 transition-all" /> </div> <p className="text-[10px] text-slate-400 mt-1">CA souhaité pour la semaine prochaine</p> </div>
+        <div> <label className="flex items-center gap-2 text-[10px] font-bold text-slate-400 uppercase tracking-wider mb-2"> <Package size={14} className="text-purple-500" /> Niveau de stock optimal </label> <input type="number" min="0" placeholder="57" value={state.objectives.optimalStock} onChange={(e) => setState(prev => ({ ...prev, objectives: { ...prev.objectives, optimalStock: e.target.value } }))} className="w-full px-4 py-3 bg-white border border-slate-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500/20 transition-all" /> <p className="text-[10px] text-slate-400 mt-1">Nombre de SKUs à maintenir en stock</p> </div>
        </div>
-
        <div className="space-y-6">
-        <div>
-         <label className="flex items-center gap-2 text-[10px] font-bold text-slate-400 uppercase tracking-wider mb-2">
-          <TrendingUp size={14} className="text-green-500" /> Taux de croissance cible
-         </label>
-         <div className="relative">
-          <input 
-           type="number" 
-           min="0"
-           placeholder="14"
-           value={state.objectives.growthRate}
-           onChange={(e) => setState(prev => ({ ...prev, objectives: { ...prev.objectives, growthRate: e.target.value } }))}
-           className="w-full pl-4 pr-8 py-3 bg-white border border-slate-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500/20 transition-all"
-          />
-          <span className="absolute right-4 top-1/2 -translate-y-1/2 text-slate-400 text-sm">%</span>
-         </div>
-         <p className="text-[10px] text-slate-400 mt-1">Croissance vs période précédente</p>
-        </div>
-
-        <div>
-         <label className="flex items-center gap-2 text-[10px] font-bold text-slate-400 uppercase tracking-wider mb-2">
-          <AlertCircle size={14} className="text-red-500" /> Seuil d'alerte stock faible
-         </label>
-         <input 
-          type="number" 
-          min="0"
-          placeholder="12"
-          value={state.objectives.alertThreshold}
-          onChange={(e) => setState(prev => ({ ...prev, objectives: { ...prev.objectives, alertThreshold: e.target.value } }))}
-          className="w-full px-4 py-3 bg-white border border-slate-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500/20 transition-all"
-         />
-         <p className="text-[10px] text-slate-400 mt-1">SKUs en dessous duquel être alerté</p>
-        </div>
+        <div> <label className="flex items-center gap-2 text-[10px] font-bold text-slate-400 uppercase tracking-wider mb-2"> <TrendingUp size={14} className="text-green-500" /> Taux de croissance cible </label> <div className="relative"> <input type="number" min="0" placeholder="14" value={state.objectives.growthRate} onChange={(e) => setState(prev => ({ ...prev, objectives: { ...prev.objectives, growthRate: e.target.value } }))} className="w-full pl-4 pr-8 py-3 bg-white border border-slate-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500/20 transition-all" /> <span className="absolute right-4 top-1/2 -translate-y-1/2 text-slate-400 text-sm">%</span> </div> <p className="text-[10px] text-slate-400 mt-1">Croissance vs période précédente</p> </div>
+        <div> <label className="flex items-center gap-2 text-[10px] font-bold text-slate-400 uppercase tracking-wider mb-2"> <AlertCircle size={14} className="text-red-500" /> Seuil d'alerte stock faible </label> <input type="number" min="0" placeholder="12" value={state.objectives.alertThreshold} onChange={(e) => setState(prev => ({ ...prev, objectives: { ...prev.objectives, alertThreshold: e.target.value } }))} className="w-full px-4 py-3 bg-white border border-slate-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500/20 transition-all" /> <p className="text-[10px] text-slate-400 mt-1">SKUs en dessous duquel être alerté</p> </div>
        </div>
       </div>
      </section>
     </div>
 
-    {/* Right Column - Data & Status */}
     <div className="lg:col-span-5 flex flex-col gap-8">
-     {/* Data Import Section */}
      <section className="bg-white rounded-2xl p-8 border border-slate-200 shadow-sm">
       <h3 className="text-xl font-bold mb-1">Ajoutez vos données</h3>
       <p className="text-sm text-slate-500 mb-8">Importez ou saisissez vos produits</p>
-
       <AnimatePresence mode="wait">
        {state.importedFile ? (
-        <motion.div 
-         initial={{ opacity: 0, scale: 0.95 }}
-         animate={{ opacity: 1, scale: 1 }}
-         exit={{ opacity: 0, scale: 0.95 }}
-         className="p-6 border-2 border-blue-100 bg-blue-50/30 rounded-2xl relative group"
-        >
+        <motion.div initial={{ opacity: 0, scale: 0.95 }} animate={{ opacity: 1, scale: 1 }} exit={{ opacity: 0, scale: 0.95 }} className="p-6 border-2 border-blue-100 bg-blue-50/30 rounded-2xl relative group" >
          <div className="flex items-center gap-4">
-          <div className="w-12 h-12 bg-blue-100 rounded-xl flex items-center justify-center text-blue-600">
-           <FileText size={24} />
-          </div>
-          <div className="flex-1 min-w-0">
-           <h4 className="font-bold text-slate-900 truncate">{state.importedFile.name}</h4>
-           <p className="text-xs text-slate-500">{state.importedFile.size} • Importé le {state.importedFile.date}</p>
-           <div className="mt-3 inline-flex items-center px-2 py-1 bg-white rounded-md text-[10px] font-bold text-slate-600 border border-slate-100">
-            {state.importedFile.count} produits importés
-           </div>
-          </div>
-          <div className="flex items-center gap-2">
-           <button className="p-2 text-slate-400 hover:text-slate-600 transition-colors">
-            <Plus size={18} />
-           </button>
-           <button 
-            onClick={removeFile}
-            className="p-2 text-slate-400 hover:text-red-500 transition-colors"
-           >
-            <Trash2 size={18} />
-           </button>
-          </div>
+          <div className="w-12 h-12 bg-blue-100 rounded-xl flex items-center justify-center text-blue-600"> <FileText size={24} /> </div>
+          <div className="flex-1 min-w-0"> <h4 className="font-bold text-slate-900 truncate">{state.importedFile.name}</h4> <p className="text-xs text-slate-500">{state.importedFile.size} • Importé le {state.importedFile.date}</p> <div className="mt-3 inline-flex items-center px-2 py-1 bg-white rounded-md text-[10px] font-bold text-slate-600 border border-slate-100"> {state.importedFile.count} produits importés </div> </div>
+          <div className="flex items-center gap-2"> <button className="p-2 text-slate-400 hover:text-slate-600 transition-colors"> <Plus size={18} /> </button> <button onClick={removeFile} className="p-2 text-slate-400 hover:text-red-500 transition-colors" > <Trash2 size={18} /> </button> </div>
          </div>
         </motion.div>
        ) : (
         <div className="grid grid-cols-2 gap-4">
-         <button 
-          onClick={() => fileInputRef.current?.click()}
-          className="flex flex-col items-center justify-center p-8 border-2 border-dashed border-slate-200 rounded-2xl hover:border-blue-400 hover:bg-blue-50/50 transition-all group"
-         >
-          <div className="w-12 h-12 bg-blue-50 rounded-full flex items-center justify-center text-blue-500 mb-4 group-hover:scale-110 transition-transform">
-           <Upload size={24} />
-          </div>
-          <span className="font-bold text-sm mb-1">Importer un CSV</span>
-          <span className="text-[10px] text-slate-400 text-center">Téléchargez votre fichier produits</span>
-          <input 
-           type="file" 
-           ref={fileInputRef} 
-           onChange={handleFileUpload} 
-           className="hidden" 
-           accept=".csv, .xlsx"
-          />
-         </button>
-
-         <button 
-          onClick={handleErpConnect}
-          disabled={state.isConnectingErp}
-          className={`flex flex-col items-center justify-center p-8 border-2 border-dashed rounded-2xl transition-all group ${
-           state.isErpConnected 
-            ? 'border-purple-400 bg-purple-50/50' 
-            : state.isConnectingErp
-             ? 'border-purple-200 bg-purple-50/30 cursor-wait'
-             : 'border-slate-200 hover:border-purple-400 hover:bg-purple-50/50'
-          }`}
-         >
-          <div className={`w-12 h-12 rounded-full flex items-center justify-center mb-4 group-hover:scale-110 transition-transform ${
-           state.isErpConnected 
-            ? 'bg-purple-100 text-purple-600' 
-            : state.isConnectingErp
-             ? 'bg-purple-50 text-purple-400'
-             : 'bg-purple-50 text-purple-500'
-          }`}>
-           {state.isConnectingErp ? (
-            <div className="w-6 h-6 border-2 border-purple-500 border-t-transparent rounded-full animate-spin" />
-           ) : state.isErpConnected ? (
-            <CheckCircle2 size={24} />
-           ) : (
-            <Database size={24} />
-           )}
-          </div>
-          <span className="font-bold text-sm mb-1">
-           {state.isConnectingErp ? 'Connexion...' : state.isErpConnected ? 'ERP Connecté' : 'acceder a ERP'}
-          </span>
-          <span className="text-[10px] text-slate-400 text-center">
-           {state.isConnectingErp ? 'Veuillez patienter' : state.isErpConnected ? 'Synchronisé avec succès' : 'Synchronisez votre système'}
-          </span>
+         <button onClick={() => fileInputRef.current?.click()} className="flex flex-col items-center justify-center p-8 border-2 border-dashed border-slate-200 rounded-2xl hover:border-blue-400 hover:bg-blue-50/50 transition-all group" > <div className="w-12 h-12 bg-blue-50 rounded-full flex items-center justify-center text-blue-500 mb-4 group-hover:scale-110 transition-transform"> <Upload size={24} /> </div> <span className="font-bold text-sm mb-1">Importer un CSV</span> <span className="text-[10px] text-slate-400 text-center">Téléchargez votre fichier produits</span> <input type="file" ref={fileInputRef} onChange={handleFileUpload} className="hidden" accept=".csv, .xlsx" /> </button>
+         <button onClick={handleErpConnect} disabled={state.isConnectingErp} className={`flex flex-col items-center justify-center p-8 border-2 border-dashed rounded-2xl transition-all group ${ state.isErpConnected ? 'border-purple-400 bg-purple-50/50' : state.isConnectingErp ? 'border-purple-200 bg-purple-50/30 cursor-wait' : 'border-slate-200 hover:border-purple-400 hover:bg-purple-50/50' }`} >
+          <div className={`w-12 h-12 rounded-full flex items-center justify-center mb-4 group-hover:scale-110 transition-transform ${ state.isErpConnected ? 'bg-purple-100 text-purple-600' : state.isConnectingErp ? 'bg-purple-50 text-purple-400' : 'bg-purple-50 text-purple-500' }`}> {state.isConnectingErp ? ( <div className="w-6 h-6 border-2 border-purple-500 border-t-transparent rounded-full animate-spin" /> ) : state.isErpConnected ? ( <CheckCircle2 size={24} /> ) : ( <Database size={24} /> )} </div>
+          <span className="font-bold text-sm mb-1"> {state.isConnectingErp ? 'Connexion...' : state.isErpConnected ? 'ERP Connecté' : 'acceder a ERP'} </span>
+          <span className="text-[10px] text-slate-400 text-center"> {state.isConnectingErp ? 'Veuillez patienter' : state.isErpConnected ? 'Synchronisé avec succès' : 'Synchronisez votre système'} </span>
          </button>
         </div>
        )}
       </AnimatePresence>
      </section>
 
-     {/* Next Steps Section */}
      <section className="bg-white rounded-2xl p-8 border border-slate-200 shadow-sm flex flex-col flex-1">
       <div className="flex-1">
-       <div className="flex items-center gap-2 text-[#0958D9] mb-6">
-        <TrendingUp size={20} />
-        <h3 className="text-lg font-bold">Prochaines étapes</h3>
-       </div>
-
+       <div className="flex items-center gap-2 text-[#0958D9] mb-6"> <TrendingUp size={20} /> <h3 className="text-lg font-bold">Prochaines étapes</h3> </div>
        <ul className="space-y-4">
-        <li className="flex items-start gap-3">
-         <CheckCircle2 size={18} className={isFormComplete ? "text-green-500 mt-0.5" : "text-slate-200 mt-0.5"} />
-         <span className={`text-sm ${isFormComplete ? "text-slate-700" : "text-slate-400"}`}>Accédez à votre tableau de bord personnalisé</span>
-        </li>
-        <li className="flex items-start gap-3">
-         <CheckCircle2 size={18} className={isFormComplete ? "text-green-500 mt-0.5" : "text-slate-200 mt-0.5"} />
-         <span className={`text-sm ${isFormComplete ? "text-slate-700" : "text-slate-400"}`}>Consultez vos premières prévisions de ventes</span>
-        </li>
+        <li className="flex items-start gap-3"> <CheckCircle2 size={18} className={isFormComplete ? "text-green-500 mt-0.5" : "text-slate-200 mt-0.5"} /> <span className={`text-sm ${isFormComplete ? "text-slate-700" : "text-slate-400"}`}>Accédez à votre tableau de bord personnalisé</span> </li>
+        <li className="flex items-start gap-3"> <CheckCircle2 size={18} className={isFormComplete ? "text-green-500 mt-0.5" : "text-slate-200 mt-0.5"} /> <span className={`text-sm ${isFormComplete ? "text-slate-700" : "text-slate-400"}`}>Consultez vos premières prévisions de ventes</span> </li>
        </ul>
       </div>
-
       <div className="mt-12">
-       <button 
-        disabled={!isFormComplete}
-        onClick={handleStart}
-        className={`w-full py-4 rounded-xl font-bold text-lg flex items-center justify-center gap-2 transition-all ${
-         isFormComplete 
-          ? "bg-[#0958D9] text-white shadow-lg shadow-blue-500/20 hover:bg-blue-700 active:scale-[0.98]" 
-          : "bg-slate-200 text-slate-400 cursor-not-allowed"
-        }`}
-       >
-        Commencer à utiliser Smart Retail
-        {isFormComplete && <ArrowRight size={20} />}
-       </button>
+       <button disabled={!isFormComplete} onClick={handleStart} className={`w-full py-4 rounded-xl font-bold text-lg flex items-center justify-center gap-2 transition-all ${ isFormComplete ? "bg-[#0958D9] text-white shadow-lg shadow-blue-500/20 hover:bg-blue-700 active:scale-[0.98]" : "bg-slate-200 text-slate-400 cursor-not-allowed" }`} > Commencer à utiliser Smart Retail {isFormComplete && <ArrowRight size={20} />} </button>
       </div>
      </section>
     </div>
