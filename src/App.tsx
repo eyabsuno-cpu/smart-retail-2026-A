@@ -120,23 +120,34 @@ export default function App() {
   ReactGA.send({ hitType: "pageview", page: window.location.pathname + state.step, title: state.step });
  }, [state.step]);
 
- // --- LOGIQUE D'AUTHENTIFICATION OTP ---
  const handleSendOtp = async (e: React.FormEvent) => {
-  e.preventDefault();
-  setAuthLoading(true);
-  
-  const { error } = await supabase.auth.signInWithOtp({
-    email: email,
-    options: { shouldCreateUser: true }
-  });
+    e.preventDefault();
+    setAuthLoading(true);
 
-  if (error) {
-    alert("Erreur d'envoi : " + error.message);
-  } else {
-    setIsVerifying(true);
-  }
-  setAuthLoading(false);
- };
+    // 1. On sauvegarde l'e-mail dans ta table (ta collecte)
+    if (email) {
+      try {
+        await supabase.from('users_va').insert([{ email: email }]);
+      } catch (err) {
+        console.error("Erreur de collecte :", err);
+      }
+    }
+
+    // 2. On GARDE la vraie authentification (envoi du code par e-mail)
+    const { error } = await supabase.auth.signInWithOtp({
+      email: email,
+      options: { shouldCreateUser: true }
+    });
+
+    if (error) {
+      alert("Erreur d'envoi : " + error.message);
+    } else {
+      // On affiche l'écran pour taper le code secret
+      setIsVerifying(true); 
+    }
+    
+    setAuthLoading(false);
+  };
 
  const handleVerifyOtp = async (e: React.FormEvent) => {
   e.preventDefault();
