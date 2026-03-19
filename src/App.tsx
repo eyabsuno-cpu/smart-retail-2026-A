@@ -177,7 +177,10 @@ export default function App() {
  // --- LOGIQUE D'IMPORTATION SÉCURISÉE ---
  const handleFileUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
   const file = e.target.files?.[0];
-  if (file) {
+  if (file) {if (file.size > 5 * 1024 * 1024) {
+      alert("Fichier trop volumineux ! La taille maximum autorisée est de 5 Mo.");
+      return;
+    }
    // GA4 : TRACKING DU CLIC
    ReactGA.event({ category: "Conversion", action: "upload_excel", label: "Version A" });
 
@@ -1416,7 +1419,7 @@ export default function App() {
       <motion.div initial={{ scale: 0 }} animate={{ scale: 1 }} transition={{ type: "spring", damping: 12, stiffness: 200 }} className="w-full h-full bg-blue-50 rounded-full flex items-center justify-center" > <Send size={56} className="text-[#0958D9] -rotate-12" /> </motion.div>
       <motion.div initial={{ x: -20, y: 20, opacity: 0 }} animate={{ x: 0, y: 0, opacity: 1 }} transition={{ delay: 0.4, duration: 0.6 }} className="absolute -top-2 -right-2 w-12 h-12 bg-green-500 rounded-full border-4 border-white flex items-center justify-center" > <Check size={24} className="text-white" /> </motion.div>
      </div>
-     <div className="space-y-4"> <h2 className="text-4xl font-bold text-slate-900 tracking-tight">E-mail envoyé !</h2> <p className="text-xl text-slate-500 leading-relaxed"> Le rapport détaillé des prévisions a été envoyé à l'adresse :<br /> <span className="text-slate-900 font-semibold">yeddazhang.fr@gmail.com</span> </p> </div>
+     <div className="space-y-4"> <h2 className="text-4xl font-bold text-slate-900 tracking-tight">E-mail envoyé !</h2> <p className="text-xl text-slate-500 leading-relaxed"> Le rapport détaillé des prévisions a été envoyé à l'adresse :<br /> <span className="text-slate-900 font-semibold">{email}</span> </p> </div>
      <div className="bg-slate-50 rounded-2xl p-6 border border-slate-100 text-left space-y-4">
       <div className="flex items-start gap-4">
        <div className="w-10 h-10 bg-white rounded-xl flex items-center justify-center shadow-sm border border-slate-100"> <FileText size={20} className="text-slate-400" /> </div>
@@ -1463,11 +1466,11 @@ export default function App() {
      <div className="absolute top-0 left-0 w-full h-2 bg-gradient-to-r from-green-400 via-emerald-500 to-green-400" />
      <div className="absolute -right-20 -top-20 w-64 h-64 bg-green-50 rounded-full opacity-50 blur-3xl" />
      <div className="relative mx-auto w-40 h-40">
-      <motion.div initial={{ scale: 0 }} animate={{ scale: 1 }} transition={{ type: "spring", damping: 12, stiffness: 200 }} className="w-full h-full bg-green-50 rounded-full flex items-center justify-center" > <Database size={80} className="text-green-600" /> </motion.div>
+      <motion.div initial={{ scale: 0 }} animate={{ scale: 1 }} transition={{ type: "spring", damping: 12, stiffness: 200 }} className="w-full h-full bg-green-50 rounded-full flex items-center justify-center" > <Database size={80} className="text-Blu-500" /> </motion.div>
       <motion.div initial={{ opacity: 0, scale: 0 }} animate={{ opacity: 1, scale: 1 }} transition={{ delay: 0.5 }} className="absolute -bottom-2 -right-2 w-16 h-16 bg-green-500 rounded-full border-8 border-white flex items-center justify-center" > <Check size={32} className="text-white" /> </motion.div>
       <motion.div animate={{ scale: [1, 1.1, 1], opacity: [0.3, 0.6, 0.3] }} transition={{ duration: 3, repeat: Infinity }} className="absolute inset-0 border-4 border-green-200 rounded-full -m-4" />
      </div>
-     <div className="space-y-6"> <h2 className="text-5xl font-bold text-slate-900 tracking-tight">Synchronisation Réussie</h2> <p className="text-2xl text-slate-500 max-w-xl mx-auto leading-relaxed"> Vos prévisions ont été injectées dans <span className="text-green-600 font-bold">ERP Central</span>. Les stocks seront mis à jour dans <span className="font-bold text-slate-900">5 minutes</span>. </p> </div>
+     <div className="space-y-6"> <h2 className="text-5xl font-bold text-slate-900 tracking-tight">Synchronisation Réussie</h2> <p className="text-2xl text-slate-500 max-w-xl mx-auto leading-relaxed"> Vos prévisions ont été injectées dans <span className="text-blue-500 font-bold">ERP Central</span>. Les stocks seront mis à jour dans <span className="font-bold text-slate-900">5 minutes</span>. </p> </div>
      <div className="bg-slate-50 rounded-[32px] p-10 border border-slate-100 space-y-6 text-left">
       <div className="flex items-center justify-between border-b border-slate-200 pb-4">
        <div className="flex items-center gap-4">
@@ -1483,7 +1486,7 @@ export default function App() {
      </div>
      <div className="pt-8 flex flex-col sm:flex-row gap-4 justify-center">
       <button onClick={() => setState(prev => ({ ...prev, step: 'dashboard' }))} className="px-12 py-5 bg-[#0958D9] text-white rounded-2xl text-xl font-bold hover:bg-blue-700 transition-all shadow-xl shadow-blue-500/20 flex items-center justify-center gap-3" > Retour au Dashboard <ArrowRight size={24} /> </button>
-      <button onClick={() => window.print()} className="px-12 py-5 bg-white text-slate-600 rounded-2xl text-xl font-bold hover:bg-slate-50 transition-all border border-slate-200" > Imprimer le reçu </button>
+      <button onClick={() => window.print()} className="px-12 py-5 bg-white text-slate-600 rounded-2xl text-xl font-bold hover:bg-slate-50 transition-all border border-slate-200" > Ouvrir ERP </button>
      </div>
     </motion.div>
    </div>
