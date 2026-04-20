@@ -124,49 +124,24 @@ export default function App() {
     e.preventDefault();
     setAuthLoading(true);
 
-    // 1. On sauvegarde l'e-mail dans ta table (ta collecte)
-    if (email) {
-      try {
+    try {
+      if (email) {
         await supabase.from('users_va').insert([{ email: email }]);
-      } catch (err) {
-        console.error("Erreur de collecte :", err);
       }
+    } catch (err) {
+      console.error("Erreur de collecte :", err);
     }
 
-    // 2. On GARDE la vraie authentification (envoi du code par e-mail)
-    const { error } = await supabase.auth.signInWithOtp({
-      email: email,
-      options: { shouldCreateUser: true }
-    });
-
-    if (error) {
-      alert("Erreur d'envoi : " + error.message);
-    } else {
-      // On affiche l'écran pour taper le code secret
-      setIsVerifying(true); 
-    }
-    
+    // Passage direct à l'étape suivante
+    setState(prev => ({ ...prev, step: 'onboarding' }));
     setAuthLoading(false);
   };
 
- const handleVerifyOtp = async (e: React.FormEvent) => {
-  e.preventDefault();
-  setAuthLoading(true);
-
-  const { error } = await supabase.auth.verifyOtp({
-    email,
-    token: otp,
-    type: 'email',
-  });
-
-  if (error) {
-    alert("Code incorrect ou expiré.");
-  } else {
+  const handleVerifyOtp = async (e: React.FormEvent) => {
+    e.preventDefault();
+    // Cette fonction ne servira plus mais on la laisse pour éviter les erreurs
     setState(prev => ({ ...prev, step: 'onboarding' }));
-  }
-  setAuthLoading(false);
- };
- // ---------------------------------------
+  };
 
  const handleErpConnect = () => {
   if (state.isErpConnected) {
@@ -184,59 +159,51 @@ export default function App() {
    }));
   }, 2000);
  };
-
- // --- LOGIQUE D'IMPORTATION SÉCURISÉE ---
- const handleFileUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
-  const file = e.target.files?.[0];
-  if (file) {if (file.size > 5 * 1024 * 1024) {
-      alert("Fichier trop volumineux ! La taille maximum autorisée est de 5 Mo.");
-      return;
-    }
-   // GA4 : TRACKING DU CLIC
+// GA4 : TRACKING DU CLIC
    ReactGA.event({ category: "Conversion", action: "upload_excel", label: "Version A" });
 
-   const reader = new FileReader();
-   reader.onload = async (evt) => {
-    try {
-     const bstr = evt.target?.result;
-     const wb = XLSX.read(bstr, { type: 'binary' });
-     const jsonData = XLSX.utils.sheet_to_json(wb.Sheets[wb.SheetNames[0]]);
-
-     const cleanData = jsonData.map((item: any) => ({
-      code_article: String(item.code_article || ''),
-      famille_produit: String(item.famille_produit || ''),
-      date_transaction: String(item.date_transaction || ''),
-      quantite_vendue: parseInt(item.quantite_vendue) || 0,
-      point_de_vente: String(item.point_de_vente || ''),
-      stock_actuel: parseInt(item.stock_actuel) || 0,
-      prix_vente_ht: String(item.prix_vente_ht || '0')
-     }));
-
-     const { error } = await supabase.from('produit').insert(cleanData);
-     if (error) throw error;
-
-     const newFile: ImportedFile = {
-      name: file.name,
-      size: (file.size / (1024 * 1024)).toFixed(1) + ' MB',
-      date: new Date().toLocaleDateString('fr-FR', { day: 'numeric', month: 'long', year: 'numeric', hour: '2-digit', minute: '2-digit' }),
-      count: cleanData.length
-     };
-     setState(prev => ({ ...prev, importedFile: newFile }));
-     alert("Données envoyées avec succès à Supabase !");
-     
-    } catch (err: any) {
-     console.error("Erreur base de données:", err.message);
-     alert("Le fichier a été lu mais n'a pas pu être enregistré dans Supabase : " + err.message);
+ // --- LOGIQUE D'IMPORTATION SIMPLIFIÉE POUR DÉMO ---
+ const handleFileUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
+  const file = e.target.files?.[0];
+  if (file) {
+    if (file.size > 5 * 1024 * 1024) {
+      alert("Fichier trop volumineux !");
+      return;
     }
-   };
-   reader.readAsBinaryString(file);
+
+    const reader = new FileReader();
+    reader.onload = async (evt) => {
+      try {
+        const bstr = evt.target?.result;
+        const wb = XLSX.read(bstr, { type: 'binary' });
+        const jsonData = XLSX.utils.sheet_to_json(wb.Sheets[wb.SheetNames[0]]);
+
+        const newFile: ImportedFile = {
+          name: file.name,
+          size: (file.size / (1024 * 1024)).toFixed(1) + ' MB',
+          date: new Date().toLocaleDateString('fr-FR', { 
+            day: 'numeric', 
+            month: 'long', 
+            year: 'numeric', 
+            hour: '2-digit', 
+            minute: '2-digit' 
+          }),
+          count: jsonData.length
+        };
+
+        setState(prev => ({ ...prev, importedFile: newFile }));
+      } catch (err: any) {
+        alert("Erreur lors de la lecture du fichier.");
+      }
+    };
+    reader.readAsBinaryString(file);
   }
  };
 
+ // GARDE BIEN CETTE FONCTION ICI
  const removeFile = () => {
   setState(prev => ({ ...prev, importedFile: null }));
  };
-
  const toggleGoal = (goalId: string) => {
   setState(prev => ({
    ...prev,
