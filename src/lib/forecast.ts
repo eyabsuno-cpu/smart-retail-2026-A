@@ -696,18 +696,41 @@ export const formatPeriode = (debut: Date, fin: Date): string => {
 };
 
 /**
- * Restreint les lignes aux `jours` derniers jours du jeu de données.
+ * Bornes des `jours` derniers jours du jeu de données.
  * La référence est la date la plus récente du fichier, pas la date du jour :
  * un export historique reste ainsi exploitable.
  */
-export const filterRowsByPeriod = (rows: ForecastRow[], jours: number): ForecastRow[] => {
+export const periodBounds = (
+ rows: ImportedRow[],
+ jours: number
+): { debut: Date; fin: Date } | null => {
  const range = datasetRange(rows);
- if (!range) return rows;
- const debut = addDays(range.fin, -(jours - 1)).getTime();
+ if (!range) return null;
+ const fin = debutDeJour(range.fin);
+ return { debut: addDays(fin, -(jours - 1)), fin };
+};
+
+/** Restreint les lignes à un intervalle de dates inclusif. */
+export const filterRowsByRange = (
+ rows: ForecastRow[],
+ debut: Date,
+ fin: Date
+): ForecastRow[] => {
+ const min = debutDeJour(debut).getTime();
+ const max = debutDeJour(fin).getTime();
  return rows.filter((r) => {
   const d = parseISODate(r.Date_Transaction);
-  return d === null || d.getTime() >= debut;
+  // Une date illisible n'est pas exclue : mieux vaut la compter que la perdre.
+  if (d === null) return true;
+  const t = d.getTime();
+  return t >= min && t <= max;
  });
+};
+
+/** Restreint les lignes aux `jours` derniers jours du jeu de données. */
+export const filterRowsByPeriod = (rows: ForecastRow[], jours: number): ForecastRow[] => {
+ const bornes = periodBounds(rows, jours);
+ return bornes ? filterRowsByRange(rows, bornes.debut, bornes.fin) : rows;
 };
 
 export interface ChartPoint {
@@ -721,15 +744,22 @@ export interface ChartPoint {
 }
 
 /**
- * Série du graphique « Chiffre d'affaire Global » sur les `jours` derniers
- * jours du fichier. `n1` reprend le CA du même jour de la période précédente,
- * ce qui permet la comparaison N / N-1 affichée par la légende.
+ * Série du graphique « Chiffre d'affaire Global » entre deux dates incluses.
+ *
+ * `rows` doit contenir **tout** l'historique, pas seulement la période
+ * affichée : la courbe N-1 reprend le CA du même jour de la période
+ * précédente, qui se situe par construction avant `debut`.
  */
-export const buildChartSeries = (rows: ForecastRow[], jours: number): ChartPoint[] => {
- const range = datasetRange(rows);
- if (!range) return [];
+export const buildChartSeries = (
+ rows: ForecastRow[],
+ debut: Date,
+ fin: Date
+): ChartPoint[] => {
+ const premier = debutDeJour(debut);
+ const dernier = debutDeJour(fin);
+ if (dernier.getTime() < premier.getTime()) return [];
 
- // CA et CA pondéré, agrégés par jour.
+ // CA et CA pondéré, agrégés par jour, sur l'historique complet.
  const parJour = new Map<number, { ca: number; forecast: number }>();
  for (const r of rows) {
   const d = parseISODate(r.Date_Transaction);
@@ -741,11 +771,11 @@ export const buildChartSeries = (rows: ForecastRow[], jours: number): ChartPoint
   parJour.set(cle, acc);
  }
 
- const fin = debutDeJour(range.fin);
+ const jours = Math.round((dernier.getTime() - premier.getTime()) / JOUR_MS) + 1;
  const points: ChartPoint[] = [];
- for (let i = jours - 1; i >= 0; i--) {
+ for (let i = 0; i < jours; i++) {
   // Décalage calendaire : un jour de changement d'heure ne fait pas 24 h.
-  const jour = addDays(fin, -i);
+  const jour = addDays(premier, i);
   const courant = parJour.get(jour.getTime());
   const precedent = parJour.get(addDays(jour, -jours).getTime());
   points.push({

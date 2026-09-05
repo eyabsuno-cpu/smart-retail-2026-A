@@ -64,10 +64,11 @@ import * as XLSX from 'xlsx';
 import {
  addDays,
  buildChartSeries,
+ debutDeJour,
  computeDashboardKpis,
- datasetRange,
- filterRowsByPeriod,
+ filterRowsByRange,
  formatPeriode,
+ periodBounds,
  formatRow,
  getBestsellers,
  getRuptures,
@@ -162,8 +163,33 @@ export default function App() {
  const [searchQuery, setSearchQuery] = useState('');
  const searchResults = searchSkus(skus, searchQuery);
 
- // Période d'analyse du dashboard : 7 ou 30 jours.
+ // Période d'analyse du dashboard : 7 ou 30 jours, ou une plage choisie
+ // au calendrier (`periodePerso` a la priorité quand elle est définie).
  const [periodeJours, setPeriodeJours] = useState<7 | 30>(7);
+ const [periodePerso, setPeriodePerso] = useState<{ debut: Date; fin: Date } | null>(null);
+
+ // Sélection en cours dans le calendrier, avant validation.
+ const [selection, setSelection] = useState<{ debut: Date | null; fin: Date | null }>({
+  debut: null,
+  fin: null
+ });
+
+ /** 1er clic = date de début, 2e = date de fin (réordonnées au besoin), 3e = on recommence. */
+ const cliquerJour = (jour: Date) => {
+  setSelection((prev) => {
+   if (!prev.debut || prev.fin) return { debut: jour, fin: null };
+   return jour.getTime() < prev.debut.getTime()
+    ? { debut: jour, fin: prev.debut }
+    : { debut: prev.debut, fin: jour };
+  });
+ };
+
+ /** Revient à une fenêtre glissante de 7 ou 30 jours. */
+ const choisirPeriodeRapide = (jours: 7 | 30) => {
+  setPeriodeJours(jours);
+  setPeriodePerso(null);
+  setSelection({ debut: null, fin: null });
+ };
 
  // Mois affiché dans le calendrier déroulant (mois courant par défaut).
  const [moisAffiche, setMoisAffiche] = useState(() => {
@@ -670,18 +696,20 @@ export default function App() {
  }
 
  if (state.step === 'dashboard') {
-  // Tout le dashboard se lit sur la période choisie (7 ou 30 jours).
-  const rowsPeriode = filterRowsByPeriod(forecastRows, periodeJours);
+  // Tout le dashboard se lit sur la période active : la plage choisie au
+  // calendrier si elle existe, sinon la fenêtre glissante de 7 / 30 jours.
+  const aujourdhui = new Date();
+  const bornes =
+   periodePerso ??
+   periodBounds(forecastRows, periodeJours) ??
+   { debut: addDays(aujourdhui, -(periodeJours - 1)), fin: aujourdhui };
+
+  const rowsPeriode = filterRowsByRange(forecastRows, bornes.debut, bornes.fin);
   const seuilAlerte = Number(state.objectives.alertThreshold) > 0
    ? Number(state.objectives.alertThreshold)
    : null;
 
-  // Libellé de période : plage réelle du fichier, sinon les N derniers jours.
-  const plageDonnees = datasetRange(rowsPeriode);
-  const aujourdhui = new Date();
-  const libellePeriode = plageDonnees
-   ? formatPeriode(plageDonnees.debut, plageDonnees.fin)
-   : formatPeriode(addDays(aujourdhui, -(periodeJours - 1)), aujourdhui);
+  const libellePeriode = formatPeriode(bornes.debut, bornes.fin);
 
   // Géométrie du mois affiché dans le calendrier : lundi = première colonne.
   const joursDansLeMois = new Date(moisAffiche.annee, moisAffiche.mois + 1, 0).getDate();
@@ -695,7 +723,9 @@ export default function App() {
   // Une décimale sous 10 unités, pour ne pas afficher « 0/sem » sur un article vendu.
   const formatVentes = (v: number) => (v > 0 && v < 10 ? v.toFixed(1) : Math.round(v).toString());
 
-  const CHART_SERIES = buildChartSeries(rowsPeriode, periodeJours);
+  // On passe l'historique complet : la courbe N-1 lit des jours antérieurs
+  // à la période affichée.
+  const CHART_SERIES = buildChartSeries(forecastRows, bornes.debut, bornes.fin);
   const RUPTURES = getRuptures(rowsPeriode, seuilAlerte);
   const BESTSELLERS = getBestsellers(rowsPeriode);
 
@@ -710,7 +740,9 @@ export default function App() {
    }).format(montant);
   const signe = (n: number) => (n >= 0 ? '+' : '');
 
-  const KPI_CARDS = kpis.hasData
+  // La bascule démo/réel dépend de la présence d'un fichier, pas du contenu de
+  // la période : une plage sans vente doit afficher des zéros, pas la démo.
+  const KPI_CARDS = forecastRows.length > 0
    ? [
       {
        label: 'FORECAST SALES',
@@ -964,8 +996,15 @@ export default function App() {
          <h3 className="text-lg font-bold">Chiffre d'affaire Global</h3>
          <div className="flex flex-col sm:flex-row items-start sm:items-center gap-4">
           <div className="relative w-full sm:w-auto">
-           <div 
-            onClick={() => setShowCalendar(!showCalendar)}
+           <div
+            onClick={() => {
+             // À l'ouverture, on se place sur le mois de la période affichée :
+             // les données peuvent être bien antérieures au mois courant.
+             if (!showCalendar) {
+              setMoisAffiche({ annee: bornes.fin.getFullYear(), mois: bornes.fin.getMonth() });
+             }
+             setShowCalendar(!showCalendar);
+            }}
             className="flex items-center gap-2 bg-slate-50 p-1 px-3 py-1.5 rounded-lg border border-slate-200 cursor-pointer hover:bg-slate-100 transition-colors"
            >
             <FileText size={14} className="text-slate-400" />
@@ -1016,21 +1055,32 @@ export default function App() {
                  <span key={`vide-${i}`} className="h-8 w-8" />
                 ))}
                 {Array.from({ length: joursDansLeMois }, (_, i) => i + 1).map(day => {
-                 const jour = new Date(moisAffiche.annee, moisAffiche.mois, day).getTime();
-                 const dansLaPeriode =
-                  !!plageDonnees &&
-                  jour >= plageDonnees.debut.getTime() &&
-                  jour <= plageDonnees.fin.getTime();
+                 const date = new Date(moisAffiche.annee, moisAffiche.mois, day);
+                 const jour = date.getTime();
+                 const debutSel = selection.debut?.getTime();
+                 const finSel = selection.fin?.getTime();
+                 // Sélection en cours : bornes en plein, jours intermédiaires en clair.
+                 const estBorne = jour === debutSel || jour === finSel;
+                 const dansSelection =
+                  debutSel !== undefined && finSel !== undefined && jour > debutSel && jour < finSel;
+                 // À défaut de sélection, on montre la période actuellement appliquée.
+                 const dansPeriodeActive =
+                  !selection.debut &&
+                  jour >= debutDeJour(bornes.debut).getTime() &&
+                  jour <= debutDeJour(bornes.fin).getTime();
                  const estAujourdhui = jour === debutDuJour;
                  return (
                   <button
                    key={day}
+                   onClick={() => cliquerJour(date)}
                    className={`h-8 w-8 text-xs rounded-lg flex items-center justify-center transition-colors ${
-                    dansLaPeriode
+                    estBorne
                      ? 'bg-[#0958D9] text-white font-bold'
-                     : estAujourdhui
-                       ? 'border border-[#0958D9] text-[#0958D9] font-bold'
-                       : 'hover:bg-slate-50 text-slate-600'
+                     : dansSelection || dansPeriodeActive
+                       ? 'bg-blue-100 text-[#0958D9] font-medium'
+                       : estAujourdhui
+                         ? 'border border-[#0958D9] text-[#0958D9] font-bold'
+                         : 'hover:bg-slate-100 text-slate-600'
                    }`}
                   >
                    {day}
@@ -1038,16 +1088,41 @@ export default function App() {
                  );
                 })}
                </div>
-               <div className="mt-4 pt-4 border-t border-slate-100 flex items-center justify-between gap-2">
-                <span className="text-[10px] text-slate-400 leading-tight">
-                 {plageDonnees ? 'Période couverte par vos données' : 'Aucune donnée importée'}
-                </span>
-                <button
-                 onClick={() => setShowCalendar(false)}
-                 className="px-4 py-2 bg-[#0958D9] text-white text-xs font-bold rounded-lg hover:bg-[#0044ee] transition-colors shrink-0"
-                >
-                 Fermer
-                </button>
+               <div className="mt-4 pt-4 border-t border-slate-100 space-y-3">
+                <p className="text-[10px] text-slate-500 leading-tight">
+                 {!selection.debut
+                  ? 'Cliquez sur une date de début.'
+                  : !selection.fin
+                    ? `Début : ${selection.debut.toLocaleDateString('fr-FR')} — cliquez sur la date de fin.`
+                    : `Du ${selection.debut.toLocaleDateString('fr-FR')} au ${selection.fin.toLocaleDateString('fr-FR')}`}
+                </p>
+                <div className="flex items-center justify-between gap-2">
+                 <button
+                  onClick={() => {
+                   setSelection({ debut: null, fin: null });
+                   setPeriodePerso(null);
+                  }}
+                  className="px-3 py-2 text-xs font-bold text-slate-500 hover:bg-slate-50 rounded-lg transition-colors"
+                 >
+                  Réinitialiser
+                 </button>
+                 <button
+                  disabled={!selection.debut || !selection.fin}
+                  onClick={() => {
+                   if (selection.debut && selection.fin) {
+                    setPeriodePerso({ debut: selection.debut, fin: selection.fin });
+                    setShowCalendar(false);
+                   }
+                  }}
+                  className={`px-4 py-2 text-xs font-bold rounded-lg transition-colors shrink-0 ${
+                   selection.debut && selection.fin
+                    ? 'bg-[#0958D9] text-white hover:bg-[#0044ee]'
+                    : 'bg-slate-100 text-slate-400 cursor-not-allowed'
+                  }`}
+                 >
+                  Valider
+                 </button>
+                </div>
                </div>
               </motion.div>
              </>
@@ -1059,9 +1134,9 @@ export default function App() {
            {([7, 30] as const).map((jours) => (
             <button
              key={jours}
-             onClick={() => setPeriodeJours(jours)}
+             onClick={() => choisirPeriodeRapide(jours)}
              className={`px-3 py-1 text-[10px] font-bold rounded-md transition-all ${
-              periodeJours === jours
+              !periodePerso && periodeJours === jours
                ? 'bg-white shadow-sm text-slate-900'
                : 'text-slate-400 hover:text-slate-600'
              }`}
@@ -1069,20 +1144,24 @@ export default function App() {
              {jours} Jours
             </button>
            ))}
+           {periodePerso && (
+            <span className="px-3 py-1 text-[10px] font-bold bg-white shadow-sm rounded-md text-[#0958D9]">
+             Personnalisé
+            </span>
+           )}
           </div>
          </div>
         </div>
         
         <div className="h-[300px] w-full">
-         {CHART_SERIES.length === 0 && (
+         {forecastRows.length === 0 && (
           <div className="h-full flex items-center justify-center text-center px-6">
            <p className="text-xs text-slate-400">
             Importez un fichier pour afficher le chiffre d'affaires réel.
-            <br />Le graphique de démonstration ci-dessous est remplacé par vos données.
            </p>
           </div>
          )}
-         {CHART_SERIES.length > 0 && (
+         {forecastRows.length > 0 && CHART_SERIES.length > 0 && (
          <ResponsiveContainer width="100%" height="100%">
           <LineChart data={CHART_SERIES}>
            <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="#f1f5f9" />
