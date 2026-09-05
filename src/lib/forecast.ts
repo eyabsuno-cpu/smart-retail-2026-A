@@ -1021,7 +1021,9 @@ export interface HistoriqueRow {
 export const buildHistorique = (
  rows: ForecastRow[],
  sku: string,
- limite = 3
+ // Six mois par défaut : de quoi couvrir deux exercices lorsque plusieurs
+ // fichiers annuels ont été importés, et donc comparer d'une année sur l'autre.
+ limite = 6
 ): HistoriqueRow[] => {
  const lignes = rows.filter((r) => r.Code_Article === sku);
 
