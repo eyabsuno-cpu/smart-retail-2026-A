@@ -61,7 +61,20 @@ import * as XLSX from 'xlsx';
 // ----------------------------------------
 
 // --- PRÉVISION MÉTÉO INTELLIGENTE ---
-import { computeDashboardKpis, formatRow, weatherLabel, type ImportedRow } from './lib/forecast';
+import {
+ addDays,
+ buildChartSeries,
+ computeDashboardKpis,
+ datasetRange,
+ filterRowsByPeriod,
+ formatPeriode,
+ formatRow,
+ getBestsellers,
+ getRuptures,
+ searchSkus,
+ weatherLabel,
+ type ImportedRow
+} from './lib/forecast';
 import { useForecast } from './hooks/useForecast';
 // ------------------------------------
 
@@ -144,6 +157,66 @@ export default function App() {
 
  // Tableau de réassort du dashboard : 3 lignes par défaut, tout au clic.
  const [showAllSkus, setShowAllSkus] = useState(false);
+
+ // Recherche SKU de l'en-tête.
+ const [searchQuery, setSearchQuery] = useState('');
+ const searchResults = searchSkus(skus, searchQuery);
+
+ // Période d'analyse du dashboard : 7 ou 30 jours.
+ const [periodeJours, setPeriodeJours] = useState<7 | 30>(7);
+
+ // Mois affiché dans le calendrier déroulant (mois courant par défaut).
+ const [moisAffiche, setMoisAffiche] = useState(() => {
+  const now = new Date();
+  return { annee: now.getFullYear(), mois: now.getMonth() };
+ });
+ const decalerMois = (m: { annee: number; mois: number }, delta: number) => {
+  const d = new Date(m.annee, m.mois + delta, 1);
+  return { annee: d.getFullYear(), mois: d.getMonth() };
+ };
+
+ // Menu profil (déconnexion).
+ const [showProfileMenu, setShowProfileMenu] = useState(false);
+
+ /** Vide les données locales et ramène l'utilisateur à l'écran de connexion. */
+ const handleLogout = () => {
+  try {
+   localStorage.removeItem(LOCAL_DATA_KEY);
+   localStorage.removeItem(LOCAL_META_KEY);
+  } catch {
+   /* storage indisponible : la réinitialisation du state suffit */
+  }
+  setImportedData([]);
+  setSelectedSku(null);
+  setVilleFilter(null);
+  setSearchQuery('');
+  setShowProfileMenu(false);
+  setShowAllSkus(false);
+  setEmail('');
+  setState({
+   step: 'login',
+   profile: { name: '', sector: '' },
+   objectives: {
+    salesTarget: '',
+    growthRate: '',
+    optimalStock: '',
+    alertThreshold: '',
+    selectedGoals: ['optimize-overstock', 'weather-impact']
+   },
+   importedFile: null,
+   isErpConnected: false,
+   isConnectingErp: false,
+   showNotifications: false
+  });
+ };
+
+ /** Ouvre la fiche d'analyse d'un SKU depuis la recherche. */
+ const openSku = (sku: string) => {
+  setSelectedSku(sku);
+  setVilleFilter(null);
+  setSearchQuery('');
+  setState(prev => ({ ...prev, step: 'analysis-detail' }));
+ };
  // ----------------------------------------------------------
 
  const [showCalendar, setShowCalendar] = useState(false);
@@ -597,19 +670,38 @@ export default function App() {
  }
 
  if (state.step === 'dashboard') {
-  const CHART_DATA = [
-   { name: '07-01-2026', n: 150, n1: 250, forecast: 180 },
-   { name: '08-01-2026', n: 280, n1: 350, forecast: 320 },
-   { name: '09-01-2026', n: 420, n1: 380, forecast: 450 },
-   { name: '10-01-2026', n: 480, n1: 420, forecast: 520 },
-   { name: '11-01-2026', n: 550, n1: 480, forecast: 580 },
-   { name: '12-01-2026', n: 620, n1: 520, forecast: 650 },
-   { name: '13-01-2026', n: 700, n1: 580, forecast: 720 },
-  ];
+  // Tout le dashboard se lit sur la période choisie (7 ou 30 jours).
+  const rowsPeriode = filterRowsByPeriod(forecastRows, periodeJours);
+  const seuilAlerte = Number(state.objectives.alertThreshold) > 0
+   ? Number(state.objectives.alertThreshold)
+   : null;
+
+  // Libellé de période : plage réelle du fichier, sinon les N derniers jours.
+  const plageDonnees = datasetRange(rowsPeriode);
+  const aujourdhui = new Date();
+  const libellePeriode = plageDonnees
+   ? formatPeriode(plageDonnees.debut, plageDonnees.fin)
+   : formatPeriode(addDays(aujourdhui, -(periodeJours - 1)), aujourdhui);
+
+  // Géométrie du mois affiché dans le calendrier : lundi = première colonne.
+  const joursDansLeMois = new Date(moisAffiche.annee, moisAffiche.mois + 1, 0).getDate();
+  const decalagePremierJour = (new Date(moisAffiche.annee, moisAffiche.mois, 1).getDay() + 6) % 7;
+  const debutDuJour = new Date(
+   aujourdhui.getFullYear(),
+   aujourdhui.getMonth(),
+   aujourdhui.getDate()
+  ).getTime();
+
+  // Une décimale sous 10 unités, pour ne pas afficher « 0/sem » sur un article vendu.
+  const formatVentes = (v: number) => (v > 0 && v < 10 ? v.toFixed(1) : Math.round(v).toString());
+
+  const CHART_SERIES = buildChartSeries(rowsPeriode, periodeJours);
+  const RUPTURES = getRuptures(rowsPeriode, seuilAlerte);
+  const BESTSELLERS = getBestsellers(rowsPeriode);
 
   // Indicateurs calculés sur les données importées et les objectifs saisis
   // à l'onboarding (seuils « stock faible » et « stock optimal »).
-  const kpis = computeDashboardKpis(forecastRows, state.objectives);
+  const kpis = computeDashboardKpis(rowsPeriode, state.objectives);
   const formatEuros = (montant: number) =>
    new Intl.NumberFormat('fr-FR', {
     style: 'currency',
@@ -699,32 +791,125 @@ export default function App() {
 
     <div className="flex-1 flex flex-col overflow-hidden">
      <header className="h-20 bg-white border-b border-slate-200 flex items-center justify-between px-4 lg:px-8 shrink-0">
-      <h1 className="text-lg lg:text-2xl font-bold text-slate-800 truncate mr-4">Système de Prévision des Ventes</h1>
-      
+      <h1 className="text-lg lg:text-2xl font-bold text-slate-800 truncate mr-4">Système de Prévision de stock</h1>
+
       <div className="flex items-center gap-2 lg:gap-6">
+       {/* Recherche SKU : filtre en direct les données importées. */}
        <div className="relative hidden md:block">
         <Search className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-400" size={18} />
-        <input 
-         type="text" 
-         placeholder="Recherche SKU"
-         className="pl-10 pr-10 py-2 bg-slate-50 border border-slate-200 rounded-lg text-sm w-40 lg:w-64 focus:outline-none focus:ring-2 focus:ring-blue-500/20"
+        <input
+         type="text"
+         value={searchQuery}
+         onChange={(e) => setSearchQuery(e.target.value)}
+         onKeyDown={(e) => {
+          if (e.key === 'Enter' && searchResults.length > 0) openSku(searchResults[0].sku);
+          if (e.key === 'Escape') setSearchQuery('');
+         }}
+         placeholder="Recherche SKU ou produit"
+         className="pl-10 pr-8 py-2 bg-slate-50 border border-slate-200 rounded-lg text-sm w-40 lg:w-64 focus:outline-none focus:ring-2 focus:ring-blue-500/20"
         />
+        {searchQuery && (
+         <button
+          onClick={() => setSearchQuery('')}
+          className="absolute right-2 top-1/2 -translate-y-1/2 p-1 text-slate-400 hover:text-slate-600"
+         >
+          <X size={14} />
+         </button>
+        )}
+
+        <AnimatePresence>
+         {searchQuery.trim().length > 0 && (
+          <>
+           <div className="fixed inset-0 z-40" onClick={() => setSearchQuery('')} />
+           <motion.div
+            initial={{ opacity: 0, y: -4 }}
+            animate={{ opacity: 1, y: 0 }}
+            exit={{ opacity: 0, y: -4 }}
+            className="absolute left-0 right-0 mt-2 bg-white rounded-xl border border-slate-200 shadow-xl z-50 overflow-hidden max-h-80 overflow-y-auto"
+           >
+            {searchResults.length === 0 ? (
+             <p className="px-4 py-3 text-xs text-slate-400">
+              {skus.length === 0
+               ? 'Importez un fichier pour activer la recherche.'
+               : `Aucun résultat pour « ${searchQuery} »`}
+             </p>
+            ) : (
+             searchResults.slice(0, 8).map((s) => (
+              <button
+               key={s.sku}
+               onClick={() => openSku(s.sku)}
+               className="w-full text-left px-4 py-2.5 hover:bg-slate-50 transition-colors border-b border-slate-50 last:border-0"
+              >
+               <p className="text-xs font-bold text-slate-800 truncate">{s.sku}</p>
+               <p className="text-[10px] text-slate-500 truncate">{s.designation}</p>
+               <p className="text-[10px] text-[#0958D9] font-bold mt-0.5">
+                {s.totalReassort} u. à réassortir · stock {s.stockActuel}
+               </p>
+              </button>
+             ))
+            )}
+           </motion.div>
+          </>
+         )}
+        </AnimatePresence>
        </div>
-       
+
        <div className="flex items-center gap-2 lg:gap-4">
-        <button 
+        <button
          onClick={() => setState(prev => ({ ...prev, showNotifications: true }))}
          className="p-2 text-slate-400 hover:text-slate-600 relative"
         >
          <Bell size={20} />
          <span className="absolute top-1.5 right-1.5 w-4 h-4 bg-red-500 text-white text-[10px] flex items-center justify-center rounded-full border-2 border-white">2</span>
         </button>
-        <div className="flex items-center gap-2 lg:gap-3 pl-2 lg:pl-4 border-l border-slate-200">
-         <img src="https://i.pravatar.cc/150?u=emily" alt="User" className="w-8 h-8 rounded-full border border-slate-200" referrerPolicy="no-referrer" />
-         <div className="text-left hidden sm:block">
-          <p className="text-sm font-bold">Emily</p>
-         </div>
-         <ChevronDown size={14} className="text-slate-400" />
+
+        {/* Profil : menu déroulant avec déconnexion. */}
+        <div className="relative pl-2 lg:pl-4 border-l border-slate-200">
+         <button
+          onClick={() => setShowProfileMenu(!showProfileMenu)}
+          className="flex items-center gap-2 lg:gap-3 hover:opacity-80 transition-opacity"
+         >
+          <img src="https://i.pravatar.cc/150?u=emily" alt="User" className="w-8 h-8 rounded-full border border-slate-200" referrerPolicy="no-referrer" />
+          <div className="text-left hidden sm:block">
+           <p className="text-sm font-bold">{state.profile.name || 'Emily'}</p>
+          </div>
+          <ChevronDown size={14} className={`text-slate-400 transition-transform ${showProfileMenu ? 'rotate-180' : ''}`} />
+         </button>
+
+         <AnimatePresence>
+          {showProfileMenu && (
+           <>
+            <div className="fixed inset-0 z-40" onClick={() => setShowProfileMenu(false)} />
+            <motion.div
+             initial={{ opacity: 0, y: -4 }}
+             animate={{ opacity: 1, y: 0 }}
+             exit={{ opacity: 0, y: -4 }}
+             className="absolute right-0 mt-2 w-60 bg-white rounded-xl border border-slate-200 shadow-xl z-50 overflow-hidden"
+            >
+             <div className="px-4 py-3 border-b border-slate-100">
+              <p className="text-sm font-bold text-slate-800 truncate">{state.profile.name || 'Emily'}</p>
+              <p className="text-[10px] text-slate-400 truncate">{email || state.profile.sector || 'Compte Smart Retail'}</p>
+             </div>
+             {state.importedFile && (
+              <div className="px-4 py-2 border-b border-slate-100">
+               <p className="text-[10px] text-slate-400">Fichier chargé</p>
+               <p className="text-xs text-slate-600 truncate">{state.importedFile.name}</p>
+              </div>
+             )}
+             <button
+              onClick={handleLogout}
+              className="w-full flex items-center gap-3 px-4 py-3 text-sm font-medium text-red-600 hover:bg-red-50 transition-colors"
+             >
+              <LogOut size={16} />
+              Déconnexion
+             </button>
+             <p className="px-4 pb-3 text-[10px] text-slate-400 leading-snug">
+              Efface les données importées de cet appareil.
+             </p>
+            </motion.div>
+           </>
+          )}
+         </AnimatePresence>
         </div>
        </div>
       </div>
@@ -784,7 +969,7 @@ export default function App() {
             className="flex items-center gap-2 bg-slate-50 p-1 px-3 py-1.5 rounded-lg border border-slate-200 cursor-pointer hover:bg-slate-100 transition-colors"
            >
             <FileText size={14} className="text-slate-400" />
-            <span className="text-xs font-medium">1, JAN 2026 - 7, JAN 2026</span>
+            <span className="text-xs font-medium">{libellePeriode}</span>
             <ChevronDown size={12} className={`text-slate-400 transition-transform ${showCalendar ? 'rotate-180' : ''}`} />
            </div>
 
@@ -802,10 +987,22 @@ export default function App() {
                className="absolute right-0 mt-2 w-72 bg-white rounded-2xl border border-slate-200 shadow-xl z-50 p-4"
               >
                <div className="flex items-center justify-between mb-4">
-                <span className="text-sm font-bold">Janvier 2026</span>
+                <span className="text-sm font-bold capitalize">
+                 {new Date(moisAffiche.annee, moisAffiche.mois, 1).toLocaleDateString('fr-FR', { month: 'long', year: 'numeric' })}
+                </span>
                 <div className="flex gap-1">
-                 <button className="p-1 hover:bg-slate-100 rounded-md"><ChevronLeft size={16} /></button>
-                 <button className="p-1 hover:bg-slate-100 rounded-md"><ChevronLeft size={16} className="rotate-180" /></button>
+                 <button
+                  onClick={() => setMoisAffiche(decalerMois(moisAffiche, -1))}
+                  className="p-1 hover:bg-slate-100 rounded-md"
+                 >
+                  <ChevronLeft size={16} />
+                 </button>
+                 <button
+                  onClick={() => setMoisAffiche(decalerMois(moisAffiche, 1))}
+                  className="p-1 hover:bg-slate-100 rounded-md"
+                 >
+                  <ChevronLeft size={16} className="rotate-180" />
+                 </button>
                 </div>
                </div>
                <div className="grid grid-cols-7 gap-1 mb-2">
@@ -814,15 +1011,26 @@ export default function App() {
                 ))}
                </div>
                <div className="grid grid-cols-7 gap-1">
-                {Array.from({ length: 31 }, (_, i) => i + 1).map(day => {
-                 const isSelected = day >= 1 && day <= 7;
+                {/* Cases vides pour aligner le 1er du mois sur le bon jour de semaine. */}
+                {Array.from({ length: decalagePremierJour }, (_, i) => (
+                 <span key={`vide-${i}`} className="h-8 w-8" />
+                ))}
+                {Array.from({ length: joursDansLeMois }, (_, i) => i + 1).map(day => {
+                 const jour = new Date(moisAffiche.annee, moisAffiche.mois, day).getTime();
+                 const dansLaPeriode =
+                  !!plageDonnees &&
+                  jour >= plageDonnees.debut.getTime() &&
+                  jour <= plageDonnees.fin.getTime();
+                 const estAujourdhui = jour === debutDuJour;
                  return (
                   <button
                    key={day}
                    className={`h-8 w-8 text-xs rounded-lg flex items-center justify-center transition-colors ${
-                    isSelected 
-                     ? 'bg-[#0958D9] text-white font-bold' 
-                     : 'hover:bg-slate-50 text-slate-600'
+                    dansLaPeriode
+                     ? 'bg-[#0958D9] text-white font-bold'
+                     : estAujourdhui
+                       ? 'border border-[#0958D9] text-[#0958D9] font-bold'
+                       : 'hover:bg-slate-50 text-slate-600'
                    }`}
                   >
                    {day}
@@ -830,12 +1038,15 @@ export default function App() {
                  );
                 })}
                </div>
-               <div className="mt-4 pt-4 border-t border-slate-100 flex justify-end">
-                <button 
+               <div className="mt-4 pt-4 border-t border-slate-100 flex items-center justify-between gap-2">
+                <span className="text-[10px] text-slate-400 leading-tight">
+                 {plageDonnees ? 'Période couverte par vos données' : 'Aucune donnée importée'}
+                </span>
+                <button
                  onClick={() => setShowCalendar(false)}
-                 className="px-4 py-2 bg-[#0958D9] text-white text-xs font-bold rounded-lg hover:bg-[#0044ee] transition-colors"
+                 className="px-4 py-2 bg-[#0958D9] text-white text-xs font-bold rounded-lg hover:bg-[#0044ee] transition-colors shrink-0"
                 >
-                 Appliquer
+                 Fermer
                 </button>
                </div>
               </motion.div>
@@ -843,16 +1054,37 @@ export default function App() {
             )}
            </AnimatePresence>
           </div>
+          {/* Bascule la période de tout le dashboard : graphique, KPI, ruptures. */}
           <div className="flex bg-slate-50 p-1 rounded-lg border border-slate-200">
-           <button className="px-3 py-1 text-[10px] font-bold bg-white shadow-sm rounded-md">7 Jour</button>
-           <button className="px-3 py-1 text-[10px] font-bold text-slate-400">30 Jour</button>
+           {([7, 30] as const).map((jours) => (
+            <button
+             key={jours}
+             onClick={() => setPeriodeJours(jours)}
+             className={`px-3 py-1 text-[10px] font-bold rounded-md transition-all ${
+              periodeJours === jours
+               ? 'bg-white shadow-sm text-slate-900'
+               : 'text-slate-400 hover:text-slate-600'
+             }`}
+            >
+             {jours} Jours
+            </button>
+           ))}
           </div>
          </div>
         </div>
         
         <div className="h-[300px] w-full">
+         {CHART_SERIES.length === 0 && (
+          <div className="h-full flex items-center justify-center text-center px-6">
+           <p className="text-xs text-slate-400">
+            Importez un fichier pour afficher le chiffre d'affaires réel.
+            <br />Le graphique de démonstration ci-dessous est remplacé par vos données.
+           </p>
+          </div>
+         )}
+         {CHART_SERIES.length > 0 && (
          <ResponsiveContainer width="100%" height="100%">
-          <LineChart data={CHART_DATA}>
+          <LineChart data={CHART_SERIES}>
            <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="#f1f5f9" />
            <XAxis 
             dataKey="name" 
@@ -874,6 +1106,7 @@ export default function App() {
            <Line type="monotone" dataKey="forecast" stroke="#a855f7" strokeWidth={2} strokeDasharray="5 5" dot={false} />
           </LineChart>
          </ResponsiveContainer>
+         )}
         </div>
         
         <div className="flex justify-center gap-6 mt-6">
@@ -895,33 +1128,54 @@ export default function App() {
        <div className="bg-white p-8 rounded-2xl border border-slate-200 shadow-sm flex flex-col">
         <div className="flex items-center justify-between mb-8">
          <h3 className="text-lg font-bold">SKU en rupture</h3>
-         <span className="px-2 py-1 bg-red-50 text-red-500 text-[10px] font-bold rounded">12 Indisponible</span>
+         <span className="px-2 py-1 bg-red-50 text-red-500 text-[10px] font-bold rounded">
+          {kpis.skusEnAlerte ?? RUPTURES.length} en alerte
+         </span>
         </div>
-        
+
+        {/* Articles dont le stock ne couvre pas le seuil d'alerte de l'onboarding. */}
         <div className="flex-1 space-y-6">
-         {[
-          { name: 'Linen Summer...', status: 'yellow', sales: '12/wk', stock: 'Reste 3 unités', img: 'https://picsum.photos/seed/linen/100/100' },
-          { name: 'Veste en cuir', status: 'red', sales: '5/wk', stock: 'Reste 3 unités', img: 'https://picsum.photos/seed/leather/100/100' },
-          { name: 'Leather Boots', status: 'yellow', sales: '4/wk', stock: 'Reste 3 unités', img: 'https://picsum.photos/seed/boots/100/100' },
-         ].map((item, i) => (
-          <div key={i} className="flex items-center gap-4">
-           <img src={item.img} alt={item.name} className="w-12 h-12 rounded-lg object-cover bg-slate-50" referrerPolicy="no-referrer" />
-           <div className="flex-1 min-w-0">
-            <h4 className="text-sm font-bold truncate">{item.name}</h4>
-            <p className="text-[10px] text-slate-400">{item.stock}</p>
-           </div>
-           <div className={`w-2.5 h-2.5 rounded-full ${
-            item.status === 'red' ? 'bg-red-500' : 'bg-yellow-400'
-           }`} />
-           <div className="text-right">
-            <p className="text-sm font-bold">{item.sales}</p>
-            <p className="text-[10px] text-slate-400 uppercase font-bold">Avg Sales</p>
-           </div>
-          </div>
-         ))}
+         {RUPTURES.length === 0 ? (
+          <p className="text-xs text-slate-400">
+           {forecastRows.length === 0
+            ? 'Importez un fichier pour suivre vos ruptures.'
+            : 'Aucun article sous le seuil d’alerte sur cette période.'}
+          </p>
+         ) : (
+          RUPTURES.map((item) => (
+           <button
+            key={item.sku}
+            onClick={() => openSku(item.sku)}
+            className="w-full flex items-center gap-4 text-left hover:bg-slate-50 rounded-lg transition-colors"
+           >
+            <img
+             src={`https://picsum.photos/seed/${encodeURIComponent(item.sku)}/100/100`}
+             alt={item.designation}
+             className="w-12 h-12 rounded-lg object-cover bg-slate-50"
+             referrerPolicy="no-referrer"
+            />
+            <div className="flex-1 min-w-0">
+             <h4 className="text-sm font-bold truncate">{item.designation}</h4>
+             <p className="text-[10px] text-slate-400">
+              {item.stock === 0 ? 'Rupture en boutique' : `${item.stock} u. dans la boutique la plus basse`}
+             </p>
+            </div>
+            <div className={`w-2.5 h-2.5 rounded-full shrink-0 ${
+             item.statut === 'red' ? 'bg-red-500' : 'bg-yellow-400'
+            }`} />
+            <div className="text-right shrink-0">
+             <p className="text-sm font-bold">{formatVentes(item.ventesHebdo)}/sem</p>
+             <p className="text-[10px] text-slate-400 uppercase font-bold">Ventes moy.</p>
+            </div>
+           </button>
+          ))
+         )}
         </div>
-        
-        <button className="w-full py-3 mt-8 border border-slate-100 rounded-xl text-xs font-bold text-slate-500 hover:bg-slate-50 transition-colors">
+
+        <button
+         onClick={() => setShowAllSkus(true)}
+         className="w-full py-3 mt-8 border border-slate-100 rounded-xl text-xs font-bold text-slate-500 hover:bg-slate-50 transition-colors"
+        >
          Voir plus de produits
         </button>
        </div>
@@ -991,29 +1245,48 @@ export default function App() {
 
        <div className="bg-white p-8 rounded-2xl border border-slate-200 shadow-sm flex flex-col">
         <h3 className="text-lg font-bold mb-8">SKU en Bestseller</h3>
-        
+
+        {/* Articles classés par chiffre d'affaires HT réalisé sur la période. */}
         <div className="flex-1 space-y-6">
-         {[
-          { name: 'Linen Summer...', status: 'green', sales: '12/wk', stock: 'Reste 3 unités', img: 'https://picsum.photos/seed/linen-best/100/100' },
-          { name: 'Floral Maxi', status: 'green', sales: '8/wk', stock: 'Reste 3 unités', img: 'https://picsum.photos/seed/floral/100/100' },
-          { name: 'Leather Boots', status: 'green', sales: '4/wk', stock: 'Reste 3 unités', img: 'https://picsum.photos/seed/boots-best/100/100' },
-         ].map((item, i) => (
-          <div key={i} className="flex items-center gap-4">
-           <img src={item.img} alt={item.name} className="w-12 h-12 rounded-lg object-cover bg-slate-50" referrerPolicy="no-referrer" />
-           <div className="flex-1 min-w-0">
-            <h4 className="text-sm font-bold truncate">{item.name}</h4>
-            <p className="text-[10px] text-slate-400">{item.stock}</p>
-           </div>
-           <div className="w-2.5 h-2.5 rounded-full bg-green-500" />
-           <div className="text-right">
-            <p className="text-sm font-bold">{item.sales}</p>
-            <p className="text-[10px] text-slate-400 uppercase font-bold">Avg Sales</p>
-           </div>
-          </div>
-         ))}
+         {BESTSELLERS.length === 0 ? (
+          <p className="text-xs text-slate-400">
+           {forecastRows.length === 0
+            ? 'Importez un fichier pour voir vos meilleures ventes.'
+            : 'Aucune vente enregistrée sur cette période.'}
+          </p>
+         ) : (
+          BESTSELLERS.map((item) => (
+           <button
+            key={item.sku}
+            onClick={() => openSku(item.sku)}
+            className="w-full flex items-center gap-4 text-left hover:bg-slate-50 rounded-lg transition-colors"
+           >
+            <img
+             src={`https://picsum.photos/seed/${encodeURIComponent(item.sku)}/100/100`}
+             alt={item.designation}
+             className="w-12 h-12 rounded-lg object-cover bg-slate-50"
+             referrerPolicy="no-referrer"
+            />
+            <div className="flex-1 min-w-0">
+             <h4 className="text-sm font-bold truncate">{item.designation}</h4>
+             <p className="text-[10px] text-slate-400">
+              {formatEuros(item.caHt)} · {item.quantite} u. vendues
+             </p>
+            </div>
+            <div className="w-2.5 h-2.5 rounded-full bg-green-500 shrink-0" />
+            <div className="text-right shrink-0">
+             <p className="text-sm font-bold">{formatVentes(item.ventesHebdo)}/sem</p>
+             <p className="text-[10px] text-slate-400 uppercase font-bold">Ventes moy.</p>
+            </div>
+           </button>
+          ))
+         )}
         </div>
-        
-        <button className="w-full py-3 mt-8 border border-slate-100 rounded-xl text-xs font-bold text-slate-500 hover:bg-slate-50 transition-colors">
+
+        <button
+         onClick={() => setShowAllSkus(true)}
+         className="w-full py-3 mt-8 border border-slate-100 rounded-xl text-xs font-bold text-slate-500 hover:bg-slate-50 transition-colors"
+        >
          Voir plus de produits
         </button>
        </div>

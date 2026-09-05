@@ -124,7 +124,13 @@ const COLUMN_ALIASES = {
  Date_Transaction: ['date_transaction', 'date_vente', 'date'],
  Quantite_Vendue: ['quantite_vendue', 'qte_vendue', 'quantite', 'qte', 'ventes', 'volume'],
  Stock_Actuel: ['stock_actuel', 'stock_dispo', 'stock'],
- CA_HT: ['ca_ht', 'chiffre_affaires_ht', 'chiffre_affaires', 'ca', 'prix_vente_ht', 'prix_ht', 'montant_ht', 'montant'],
+ /** Montant déjà consolidé pour la ligne. */
+ CA_HT: ['ca_ht', 'chiffre_affaires_ht', 'chiffre_affaires', 'ca', 'montant_ht', 'montant'],
+ /**
+  * Prix à l'unité. Distinct du CA : sommer des prix unitaires n'a aucun sens,
+  * il faut les multiplier par la quantité vendue pour obtenir un CA.
+  */
+ Prix_Unitaire: ['prix_vente_ht', 'prix_unitaire_ht', 'prix_ht', 'prix_unitaire', 'prix'],
  Point_de_Vente: ['point_de_vente', 'pdv', 'boutique', 'magasin', 'store', 'site']
 } as const;
 
@@ -202,14 +208,24 @@ export const formatRow = (row: any): ImportedRow => {
  const lookup = buildLookup(row);
  const get = (aliases: readonly string[]) => pickField(lookup, aliases);
  const pointDeVente = String(get(COLUMN_ALIASES.Point_de_Vente) ?? '');
+ const quantite = parseNumber(get(COLUMN_ALIASES.Quantite_Vendue));
+
+ // Le fichier fournit soit un CA de ligne, soit un prix unitaire : dans le
+ // second cas on reconstitue le CA en multipliant par la quantité vendue.
+ const montant = get(COLUMN_ALIASES.CA_HT);
+ const caHt =
+  montant !== undefined
+   ? parseNumber(montant)
+   : parseNumber(get(COLUMN_ALIASES.Prix_Unitaire)) * quantite;
+
  return {
   Code_Article: String(get(COLUMN_ALIASES.Code_Article) ?? ''),
   Designation: String(get(COLUMN_ALIASES.Designation) ?? ''),
   Famille_Produit: String(get(COLUMN_ALIASES.Famille_Produit) ?? ''),
   Date_Transaction: normalizeDate(get(COLUMN_ALIASES.Date_Transaction)),
-  Quantite_Vendue: parseNumber(get(COLUMN_ALIASES.Quantite_Vendue)),
+  Quantite_Vendue: quantite,
   Stock_Actuel: parseNumber(get(COLUMN_ALIASES.Stock_Actuel)),
-  CA_HT: parseNumber(get(COLUMN_ALIASES.CA_HT)),
+  CA_HT: caHt,
   Point_de_Vente: pointDeVente,
   Ville: extractVille(pointDeVente)
  };
@@ -635,4 +651,237 @@ const expliquerAbsenceDImpact = (rows: ForecastRow[]): string | null => {
    ? `aucune pluie sur vos ${villes.length} ville${villes.length > 1 ? 's' : ''} aujourd'hui`
    : `la météo du jour ne correspond à aucune de vos familles sensibles`;
  return `Conditions neutres : ${contexte}. Accessoires et Manteaux ne sont majorés que par temps de pluie, Bain que par beau temps.`;
+};
+
+// ---------------------------------------------------------------------------
+// 7. Période, graphique, recherche, ruptures et best-sellers
+// ---------------------------------------------------------------------------
+
+const JOUR_MS = 86400000;
+
+/**
+ * Minuit local du jour d'une date, utilisé comme clé d'agrégation.
+ * On passe par les composantes calendaires et non par un calcul en
+ * millisecondes : les jours de changement d'heure ne durent pas 24 h.
+ */
+export const debutDeJour = (d: Date): Date =>
+ new Date(d.getFullYear(), d.getMonth(), d.getDate());
+
+/** Décale une date d'un nombre de jours calendaires (robuste au passage à l'heure d'été). */
+export const addDays = (d: Date, jours: number): Date =>
+ new Date(d.getFullYear(), d.getMonth(), d.getDate() + jours);
+
+/** Parse une date `AAAA-MM-JJ` en Date locale. `null` si invalide. */
+export const parseISODate = (iso: string): Date | null => {
+ const m = String(iso ?? '').match(/^(\d{4})-(\d{2})-(\d{2})$/);
+ if (!m) return null;
+ const d = new Date(Number(m[1]), Number(m[2]) - 1, Number(m[3]));
+ return Number.isNaN(d.getTime()) ? null : d;
+};
+
+/** Étendue des dates présentes dans les données. */
+export const datasetRange = (rows: ImportedRow[]): { debut: Date; fin: Date } | null => {
+ const dates = rows
+  .map((r) => parseISODate(r.Date_Transaction))
+  .filter((d): d is Date => d !== null)
+  .sort((a, b) => a.getTime() - b.getTime());
+ return dates.length === 0 ? null : { debut: dates[0], fin: dates[dates.length - 1] };
+};
+
+/** Libellé de période, ex. « 2 JAN 2026 - 30 MAR 2026 ». */
+export const formatPeriode = (debut: Date, fin: Date): string => {
+ const fmt = (d: Date) =>
+  d.toLocaleDateString('fr-FR', { day: 'numeric', month: 'short', year: 'numeric' }).toUpperCase().replace('.', '');
+ return `${fmt(debut)} - ${fmt(fin)}`;
+};
+
+/**
+ * Restreint les lignes aux `jours` derniers jours du jeu de données.
+ * La référence est la date la plus récente du fichier, pas la date du jour :
+ * un export historique reste ainsi exploitable.
+ */
+export const filterRowsByPeriod = (rows: ForecastRow[], jours: number): ForecastRow[] => {
+ const range = datasetRange(rows);
+ if (!range) return rows;
+ const debut = addDays(range.fin, -(jours - 1)).getTime();
+ return rows.filter((r) => {
+  const d = parseISODate(r.Date_Transaction);
+  return d === null || d.getTime() >= debut;
+ });
+};
+
+export interface ChartPoint {
+ name: string;
+ /** CA HT réalisé sur la période courante. */
+ n: number;
+ /** CA HT de la période précédente (même jour, décalé de `jours`). */
+ n1: number;
+ /** CA HT repondéré par le coefficient météo. */
+ forecast: number;
+}
+
+/**
+ * Série du graphique « Chiffre d'affaire Global » sur les `jours` derniers
+ * jours du fichier. `n1` reprend le CA du même jour de la période précédente,
+ * ce qui permet la comparaison N / N-1 affichée par la légende.
+ */
+export const buildChartSeries = (rows: ForecastRow[], jours: number): ChartPoint[] => {
+ const range = datasetRange(rows);
+ if (!range) return [];
+
+ // CA et CA pondéré, agrégés par jour.
+ const parJour = new Map<number, { ca: number; forecast: number }>();
+ for (const r of rows) {
+  const d = parseISODate(r.Date_Transaction);
+  if (!d) continue;
+  const cle = d.getTime();
+  const acc = parJour.get(cle) ?? { ca: 0, forecast: 0 };
+  acc.ca += r.CA_HT;
+  acc.forecast += r.CA_HT * r.Coefficient;
+  parJour.set(cle, acc);
+ }
+
+ const fin = debutDeJour(range.fin);
+ const points: ChartPoint[] = [];
+ for (let i = jours - 1; i >= 0; i--) {
+  // Décalage calendaire : un jour de changement d'heure ne fait pas 24 h.
+  const jour = addDays(fin, -i);
+  const courant = parJour.get(jour.getTime());
+  const precedent = parJour.get(addDays(jour, -jours).getTime());
+  points.push({
+   name: jour.toLocaleDateString('fr-FR', { day: '2-digit', month: '2-digit' }),
+   n: Math.round(courant?.ca ?? 0),
+   n1: Math.round(precedent?.ca ?? 0),
+   forecast: Math.round(courant?.forecast ?? 0)
+  });
+ }
+ return points;
+};
+
+/** Normalise un texte pour une comparaison insensible à la casse et aux accents. */
+const normalizeTexte = (texte: string): string =>
+ String(texte ?? '')
+  .normalize('NFD')
+  .replace(/[\u0300-\u036f]/g, '')
+  .toLowerCase()
+  .trim();
+
+/**
+ * Recherche libre sur le code article, la désignation et la famille.
+ * Une requête vide ne renvoie rien : l'UI n'affiche alors aucun résultat.
+ */
+export const searchSkus = (skus: SkuAggregate[], query: string): SkuAggregate[] => {
+ const terme = normalizeTexte(query);
+ if (terme.length === 0) return [];
+ return skus.filter((s) =>
+  normalizeTexte(`${s.sku} ${s.designation} ${s.famille}`).includes(terme)
+ );
+};
+
+export interface RuptureItem {
+ sku: string;
+ designation: string;
+ /** Stock cumulé sur l'ensemble des boutiques. */
+ stock: number;
+ /** Ventes moyennes hebdomadaires réellement observées. */
+ ventesHebdo: number;
+ /** `red` = rupture ou stock critique, `yellow` = sous le seuil d'alerte. */
+ statut: 'red' | 'yellow';
+}
+
+/** Nombre de semaines couvertes par le fichier (au moins une). */
+const semainesCouvertes = (rows: ImportedRow[]): number => {
+ const range = datasetRange(rows);
+ if (!range) return 1;
+ const jours = Math.round((range.fin.getTime() - range.debut.getTime()) / JOUR_MS) + 1;
+ return Math.max(1, jours / 7);
+};
+
+/** Agrège stock, quantité et CA par SKU. */
+const totauxParSku = (rows: ForecastRow[]) => {
+ const map = new Map<
+  string,
+  {
+   sku: string;
+   designation: string;
+   stock: number;
+   /** Stock de la boutique la plus basse : c'est là que la rupture survient. */
+   stockMin: number;
+   quantite: number;
+   caHt: number;
+  }
+ >();
+ for (const r of rows) {
+  const sku = r.Code_Article || '—';
+  const acc =
+   map.get(sku) ??
+   { sku, designation: r.Designation || sku, stock: 0, stockMin: Infinity, quantite: 0, caHt: 0 };
+  acc.stock += r.Stock_Actuel;
+  acc.stockMin = Math.min(acc.stockMin, r.Stock_Actuel);
+  acc.quantite += r.Quantite_Vendue;
+  acc.caHt += r.CA_HT;
+  if (!acc.designation || acc.designation === sku) acc.designation = r.Designation || sku;
+  map.set(sku, acc);
+ }
+ return map;
+};
+
+/**
+ * SKU dont le stock est faible ou critique, du plus urgent au moins urgent.
+ *
+ * Le seuil vient des objectifs saisis à l'onboarding ; à défaut, on retient
+ * les SKU dont le stock ne couvre pas une semaine de ventes. La comparaison
+ * porte sur la boutique la plus basse, exactement comme le KPI « alerte stock
+ * faible » : le compteur et la liste restent ainsi cohérents.
+ */
+export const getRuptures = (
+ rows: ForecastRow[],
+ seuilAlerte: number | null,
+ limite = 3
+): RuptureItem[] => {
+ const semaines = semainesCouvertes(rows);
+ const items: RuptureItem[] = [];
+
+ for (const t of totauxParSku(rows).values()) {
+  const ventesHebdo = t.quantite / semaines;
+  const seuil = seuilAlerte ?? Math.ceil(ventesHebdo);
+  if (t.stockMin >= seuil) continue;
+  items.push({
+   sku: t.sku,
+   designation: t.designation,
+   stock: t.stockMin,
+   // Non arrondi : l'UI décide de l'affichage (« 0,5/sem » plutôt que « 0/sem »).
+   ventesHebdo,
+   // Rupture totale ou moins de la moitié du seuil : critique.
+   statut: t.stockMin === 0 || t.stockMin < seuil / 2 ? 'red' : 'yellow'
+  });
+ }
+
+ return items.sort((a, b) => a.stock - b.stock).slice(0, limite);
+};
+
+export interface BestsellerItem {
+ sku: string;
+ designation: string;
+ caHt: number;
+ quantite: number;
+ ventesHebdo: number;
+ stock: number;
+}
+
+/** SKU les plus performants, classés par chiffre d'affaires HT décroissant. */
+export const getBestsellers = (rows: ForecastRow[], limite = 3): BestsellerItem[] => {
+ const semaines = semainesCouvertes(rows);
+ return Array.from(totauxParSku(rows).values())
+  .filter((t) => t.quantite > 0)
+  .map((t) => ({
+   sku: t.sku,
+   designation: t.designation,
+   caHt: t.caHt,
+   quantite: t.quantite,
+   ventesHebdo: t.quantite / semaines,
+   stock: t.stock
+  }))
+  .sort((a, b) => b.caHt - a.caHt || b.quantite - a.quantite)
+  .slice(0, limite);
 };
