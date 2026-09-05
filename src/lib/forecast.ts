@@ -478,3 +478,161 @@ export const aggregateBySku = (rows: ForecastRow[]): SkuAggregate[] => {
 
  return aggregates.sort((a, b) => b.totalReassort - a.totalReassort);
 };
+
+// ---------------------------------------------------------------------------
+// 6. Indicateurs du tableau de bord
+// ---------------------------------------------------------------------------
+
+/** Objectifs saisis à l'onboarding (stockés en chaînes de caractères). */
+export interface Objectifs {
+ salesTarget?: string;
+ optimalStock?: string;
+ alertThreshold?: string;
+}
+
+export interface DashboardKpis {
+ /** Faux si aucun fichier n'a été importé : l'UI garde ses valeurs de démo. */
+ hasData: boolean;
+ /** CA prévu = somme des CA_HT repondérés par le coefficient météo. */
+ caPrevu: number;
+ /** Écart du CA prévu, vs l'objectif de ventes si renseigné, sinon vs le CA brut. */
+ ecartCaPct: number;
+ ecartCaLabel: string;
+ /** SKU ayant au moins une boutique sous le seuil d'alerte. `null` si seuil absent. */
+ skusEnAlerte: number | null;
+ /** SKU ayant au moins une boutique au-dessus du stock optimal. `null` si absent. */
+ skusSurStock: number | null;
+ /** Écart global entre Prevision_IA et Quantite_Vendue, en %. */
+ impactMeteoPct: number;
+ /** Famille de produits la plus dopée par la météo, si l'une l'est. */
+ familleImpactee: string | null;
+ /**
+  * Phrase expliquant à l'utilisateur pourquoi la météo n'a rien changé.
+  * `null` dès qu'au moins une ligne a été ajustée.
+  */
+ explicationMeteo: string | null;
+}
+
+/** Convertit un objectif saisi en seuil exploitable (`null` si vide ou invalide). */
+const parseSeuil = (value: unknown): number | null => {
+ const n = Number(String(value ?? '').trim());
+ return Number.isFinite(n) && n > 0 ? n : null;
+};
+
+/**
+ * Calcule les quatre cartes du tableau de bord.
+ *
+ * Les seuils « stock faible » et « sur-stockage » sont ceux saisis à
+ * l'onboarding et sont comparés au `Stock_Actuel` **de chaque boutique** :
+ * un SKU est compté dès qu'au moins un de ses points de vente franchit le
+ * seuil. Comparer un stock cumulé multi-boutiques à un seuil unitaire n'aurait
+ * pas de sens.
+ */
+export const computeDashboardKpis = (
+ rows: ForecastRow[],
+ objectifs: Objectifs = {}
+): DashboardKpis => {
+ const seuilAlerte = parseSeuil(objectifs.alertThreshold);
+ const stockOptimal = parseSeuil(objectifs.optimalStock);
+ const objectifCa = parseSeuil(objectifs.salesTarget);
+
+ if (rows.length === 0) {
+  return {
+   hasData: false,
+   caPrevu: 0,
+   ecartCaPct: 0,
+   ecartCaLabel: '',
+   skusEnAlerte: null,
+   skusSurStock: null,
+   impactMeteoPct: 0,
+   familleImpactee: null,
+   explicationMeteo: null
+  };
+ }
+
+ const sum = (pick: (r: ForecastRow) => number) => rows.reduce((acc, r) => acc + pick(r), 0);
+
+ const caPrevu = sum((r) => r.CA_HT * r.Coefficient);
+ const caBrut = sum((r) => r.CA_HT);
+ const quantiteTotale = sum((r) => r.Quantite_Vendue);
+ const previsionTotale = sum((r) => r.Prevision_IA);
+
+ // Comparaison prioritaire à l'objectif de ventes quand il est renseigné.
+ const ecartCaPct = objectifCa
+  ? ((caPrevu - objectifCa) / objectifCa) * 100
+  : caBrut > 0
+    ? ((caPrevu - caBrut) / caBrut) * 100
+    : 0;
+ const ecartCaLabel = objectifCa ? 'vs objectif' : 'avec météo';
+
+ const compterSkus = (garder: (r: ForecastRow) => boolean): number =>
+  new Set(rows.filter(garder).map((r) => r.Code_Article)).size;
+
+ // Famille la plus dopée par la météo.
+ const parFamille = new Map<string, { quantite: number; prevision: number }>();
+ for (const r of rows) {
+  const famille = r.Famille_Produit || '—';
+  const acc = parFamille.get(famille) ?? { quantite: 0, prevision: 0 };
+  acc.quantite += r.Quantite_Vendue;
+  acc.prevision += r.Prevision_IA;
+  parFamille.set(famille, acc);
+ }
+ let familleImpactee: string | null = null;
+ let meilleurUplift = 0;
+ for (const [famille, { quantite, prevision }] of parFamille) {
+  if (quantite <= 0) continue;
+  const uplift = (prevision - quantite) / quantite;
+  if (uplift > meilleurUplift) {
+   meilleurUplift = uplift;
+   familleImpactee = famille;
+  }
+ }
+
+ return {
+  hasData: true,
+  caPrevu,
+  ecartCaPct,
+  ecartCaLabel,
+  skusEnAlerte: seuilAlerte === null ? null : compterSkus((r) => r.Stock_Actuel < seuilAlerte),
+  skusSurStock: stockOptimal === null ? null : compterSkus((r) => r.Stock_Actuel > stockOptimal),
+  impactMeteoPct:
+   quantiteTotale > 0 ? ((previsionTotale - quantiteTotale) / quantiteTotale) * 100 : 0,
+  familleImpactee,
+  explicationMeteo: expliquerAbsenceDImpact(rows)
+ };
+};
+
+/**
+ * Explique pourquoi aucun coefficient météo ne s'est appliqué.
+ * Trois causes possibles, distinguées ici pour ne pas laisser l'utilisateur
+ * devant un « +0% » inexpliqué. Renvoie `null` dès qu'une ligne est ajustée.
+ */
+const expliquerAbsenceDImpact = (rows: ForecastRow[]): string | null => {
+ if (rows.some((r) => r.Coefficient !== 1)) return null;
+
+ // Cause 1 : les appels Open-Meteo ont tous échoué.
+ if (rows.every((r) => typeof r.Weathercode !== 'number')) {
+  return "Météo indisponible pour vos villes : les prévisions n'ont pas été ajustées (coefficient 1.0). Vérifiez votre connexion, puis réimportez le fichier.";
+ }
+
+ // Cause 2 : aucune des familles du fichier n'est sensible à la météo.
+ const famillesSensibles = rows.filter(
+  (r) =>
+   familleMatches(r.Famille_Produit, RAIN_FAMILY_STEMS) ||
+   familleMatches(r.Famille_Produit, SUN_FAMILY_STEMS)
+ );
+ if (famillesSensibles.length === 0) {
+  return "Aucune famille sensible à la météo dans vos données. Seules les familles Accessoires et Manteaux (majorées par la pluie) et Bain (majorée par le beau temps) sont ajustées.";
+ }
+
+ // Cause 3 : les familles sont présentes mais la météo du jour ne déclenche rien.
+ const villes = Array.from(new Set(rows.map((r) => r.Ville).filter(Boolean)));
+ const pluie = villes.filter((v) =>
+  rows.some((r) => r.Ville === v && isRainy(r.Weathercode))
+ ).length;
+ const contexte =
+  pluie === 0
+   ? `aucune pluie sur vos ${villes.length} ville${villes.length > 1 ? 's' : ''} aujourd'hui`
+   : `la météo du jour ne correspond à aucune de vos familles sensibles`;
+ return `Conditions neutres : ${contexte}. Accessoires et Manteaux ne sont majorés que par temps de pluie, Bain que par beau temps.`;
+};

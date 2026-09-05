@@ -61,7 +61,7 @@ import * as XLSX from 'xlsx';
 // ----------------------------------------
 
 // --- PRÉVISION MÉTÉO INTELLIGENTE ---
-import { formatRow, weatherLabel, type ImportedRow } from './lib/forecast';
+import { computeDashboardKpis, formatRow, weatherLabel, type ImportedRow } from './lib/forecast';
 import { useForecast } from './hooks/useForecast';
 // ------------------------------------
 
@@ -133,7 +133,7 @@ export default function App() {
 
  // Prévision météo : géocodage + météo courante par ville, puis application
  // des coefficients et agrégation bottom-up des réassorts par SKU.
- const { villes: villesImportees, skus, skuMap } = useForecast(importedData);
+ const { villes: villesImportees, skus, skuMap, forecastRows } = useForecast(importedData);
 
  // SKU sélectionné depuis le tableau de réassort du dashboard.
  const [selectedSku, setSelectedSku] = useState<string | null>(null);
@@ -607,6 +607,67 @@ export default function App() {
    { name: '13-01-2026', n: 700, n1: 580, forecast: 720 },
   ];
 
+  // Indicateurs calculés sur les données importées et les objectifs saisis
+  // à l'onboarding (seuils « stock faible » et « stock optimal »).
+  const kpis = computeDashboardKpis(forecastRows, state.objectives);
+  const formatEuros = (montant: number) =>
+   new Intl.NumberFormat('fr-FR', {
+    style: 'currency',
+    currency: 'EUR',
+    maximumFractionDigits: 0
+   }).format(montant);
+  const signe = (n: number) => (n >= 0 ? '+' : '');
+
+  const KPI_CARDS = kpis.hasData
+   ? [
+      {
+       label: 'FORECAST SALES',
+       value: formatEuros(kpis.caPrevu),
+       sub: `${signe(kpis.ecartCaPct)}${Math.round(kpis.ecartCaPct)}% ${kpis.ecartCaLabel}`,
+       trend: kpis.ecartCaPct >= 0 ? 'up' : 'none',
+       color: 'blue',
+       icon: TrendingUp,
+       period: 'CA HT PONDÉRÉ MÉTÉO'
+      },
+      {
+       label: 'ALERTE STOCK FAIBLE',
+       value: kpis.skusEnAlerte === null ? '—' : String(kpis.skusEnAlerte),
+       sub: state.objectives.alertThreshold
+        ? `sous ${state.objectives.alertThreshold} unités`
+        : 'seuil non défini',
+       trend: 'alert',
+       color: 'red',
+       icon: AlertCircle,
+       unit: 'SKUs'
+      },
+      {
+       label: 'SUR STOCKAGE',
+       value: kpis.skusSurStock === null ? '—' : String(kpis.skusSurStock),
+       sub: state.objectives.optimalStock
+        ? `au-dessus de ${state.objectives.optimalStock} unités`
+        : 'seuil non défini',
+       trend: 'none',
+       color: 'blue',
+       icon: Package,
+       unit: 'SKUs'
+      },
+      {
+       label: 'IMPACT METEO',
+       value: `${signe(kpis.impactMeteoPct)}${Math.round(kpis.impactMeteoPct)}%`,
+       sub: 'sur les ventes prévues',
+       trend: kpis.impactMeteoPct > 0 ? 'up' : 'none',
+       color: 'yellow',
+       icon: CloudSun,
+       cat: kpis.familleImpactee ? `CAT: ${kpis.familleImpactee.toUpperCase()}` : 'AUCUN AJUSTEMENT'
+      }
+     ]
+   : [
+      { label: 'FORECAST SALES', value: '€42,850', sub: '+14% vs last period', trend: 'up', color: 'blue', icon: TrendingUp, period: 'NEXT 7 DAYS' },
+      { label: 'ALERTE STOCK FAIBLE', value: '12', sub: 'Urgent SKUs', trend: 'alert', color: 'red', icon: AlertCircle, unit: 'SKUs' },
+      { label: 'SUR STOCKAGE', value: '57', sub: '', trend: 'none', color: 'blue', icon: Package, unit: 'SKUs' },
+      { label: 'IMPACT METEO', value: '+22%', sub: '+5% vs periode precedente', trend: 'up', color: 'yellow', icon: CloudSun, cat: 'CAT: VESTE' },
+     ];
+
   // Réassort recommandé par SKU (données réelles si un fichier a été importé,
   // sinon le jeu de démonstration).
   const REASSORT_ROWS = skus.length > 0
@@ -671,12 +732,7 @@ export default function App() {
 
      <main className="flex-1 overflow-y-auto p-4 lg:p-8 space-y-6 lg:space-y-8">
       <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4 lg:gap-6">
-       {[
-        { label: 'FORECAST SALES', value: '€42,850', sub: '+14% vs last period', trend: 'up', color: 'blue', icon: TrendingUp, period: 'NEXT 7 DAYS' },
-        { label: 'ALERTE STOCK FAIBLE', value: '12', sub: 'Urgent SKUs', trend: 'alert', color: 'red', icon: AlertCircle, unit: 'SKUs' },
-        { label: 'SUR STOCKAGE', value: '57', sub: '', trend: 'none', color: 'blue', icon: Package, unit: 'SKUs' },
-        { label: 'IMPACT METEO', value: '+22%', sub: '+5% vs periode precedente', trend: 'up', color: 'yellow', icon: CloudSun, cat: 'CAT: VESTE' },
-       ].map((stat, i) => (
+       {KPI_CARDS.map((stat, i) => (
         <div key={i} className="bg-white p-6 rounded-2xl border border-slate-200 shadow-sm relative overflow-hidden">
          <div className="flex justify-between items-start mb-4">
           <span className="text-[10px] font-bold text-slate-400 uppercase tracking-wider">{stat.label}</span>
@@ -705,6 +761,17 @@ export default function App() {
         </div>
        ))}
       </div>
+
+      {/* Pourquoi « IMPACT METEO » affiche +0% : la raison exacte, pas un texte générique. */}
+      {kpis.explicationMeteo && (
+       <div className="flex items-start gap-3 p-4 bg-[#f8fbff] border border-[#BAE0FF] rounded-2xl">
+        <CloudSun size={18} className="text-[#0958D9] shrink-0 mt-0.5" />
+        <div>
+         <p className="text-xs font-bold text-[#0958D9] mb-1">Pourquoi l'impact météo est nul ?</p>
+         <p className="text-xs text-slate-600 leading-relaxed">{kpis.explicationMeteo}</p>
+        </div>
+       </div>
+      )}
 
       <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
        <div className="lg:col-span-2 bg-white p-4 lg:p-8 rounded-2xl border border-slate-200 shadow-sm">
@@ -1117,17 +1184,20 @@ export default function App() {
         <div className="flex justify-between items-start">
          <div className="flex items-center gap-2 text-[#0958D9]">
           <TrendingUp size={20} />
-          <span className="text-sm lg:text-[22.44px] font-medium uppercase">PRÉVISION IA</span>
+          <div>
+           <span className="text-sm lg:text-[22.44px] font-medium uppercase block leading-tight">PRÉVISION IA</span>
+           <span className="text-[10px] lg:text-sm text-black/45 font-normal uppercase tracking-wide">Sur 7 jours</span>
+          </div>
          </div>
          <div className="flex items-center gap-1 lg:gap-2 px-2 py-1 lg:py-2 bg-[#E6F7FF] rounded text-[#0958D9]">
           <CheckCircle2 size={18} />
           <span className="text-sm lg:text-xl font-semibold">Haute</span>
          </div>
         </div>
-        
+
         <div>
          <div className="text-4xl lg:text-[48px] font-bold text-[#101828] leading-none">{activeSku ? activeSku.totalReassort : 120}</div>
-         <p className="text-sm lg:text-xl text-black/45 mt-2">Unités recommandées</p>
+         <p className="text-sm lg:text-xl text-black/45 mt-2">Unités recommandées sur 7 jours</p>
          {activeSku && (
           <p className="text-xs lg:text-base text-black/45 mt-1">
            Consolidé sur {activeSku.boutiques.length} boutique{activeSku.boutiques.length > 1 ? 's' : ''}
