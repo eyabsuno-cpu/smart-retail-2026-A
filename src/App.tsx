@@ -56,10 +56,51 @@ import {
 } from 'recharts';
 import { AppState, ImportedFile } from './types';
 
-// --- MODIFICATIONS TECHNIQUES POUR SUPABASE ---
-import { supabase } from './lib/supabase';
+// --- IMPORTATION LOCALE (CSV / EXCEL) ---
 import * as XLSX from 'xlsx';
-// ----------------------------------------------
+// ----------------------------------------
+
+// Clés de stockage local pour les données importées
+const LOCAL_DATA_KEY = 'smartRetail_importedData';
+const LOCAL_META_KEY = 'smartRetail_importedFileMeta';
+
+// Relit une valeur JSON du localStorage sans jamais lever d'exception
+const readLocal = <T,>(key: string, fallback: T): T => {
+ try {
+  const stored = localStorage.getItem(key);
+  return stored ? (JSON.parse(stored) as T) : fallback;
+ } catch {
+  return fallback;
+ }
+};
+
+// Extrait le nom de la ville depuis la valeur Point_de_Vente
+// Ex : 'Boutique_Paris_1' -> 'Paris', 'Boutique_Lyon' -> 'Lyon'
+const extractVille = (pointDeVente: string): string => {
+ if (!pointDeVente) return '';
+ const parts = String(pointDeVente).split('_');
+ const ville = parts.find(
+  (p) => p && p.toLowerCase() !== 'boutique' && p.toLowerCase() !== 'magasin' && !/^\d+$/.test(p)
+ );
+ return ville ? ville.trim() : String(pointDeVente).trim();
+};
+
+// Formate une ligne brute du fichier : ne garde que les colonnes attendues
+// et ajoute la propriété Ville déduite de Point_de_Vente
+const formatRow = (row: any) => {
+ const pointDeVente = String(row.Point_de_Vente ?? '');
+ return {
+  Code_Article: String(row.Code_Article ?? ''),
+  Designation: String(row.Designation ?? ''),
+  Famille_Produit: String(row.Famille_Produit ?? ''),
+  Date_Transaction: String(row.Date_Transaction ?? ''),
+  Quantite_Vendue: Number(row.Quantite_Vendue) || 0,
+  Stock_Actuel: Number(row.Stock_Actuel) || 0,
+  CA_HT: Number(row.CA_HT) || 0,
+  Point_de_Vente: pointDeVente,
+  Ville: extractVille(pointDeVente)
+ };
+};
 
 // GA4 : INITIALISATION
 ReactGA.initialize("G-86B5216X0W");
@@ -94,7 +135,8 @@ export default function App() {
    alertThreshold: '',
    selectedGoals: ['optimize-overstock', 'weather-impact']
   },
-  importedFile: null,
+  // Restauré depuis le localStorage pour survivre au rafraîchissement
+  importedFile: readLocal<ImportedFile | null>(LOCAL_META_KEY, null),
   isErpConnected: false,
   isConnectingErp: false,
   showNotifications: false
@@ -106,6 +148,16 @@ export default function App() {
  const [isVerifying, setIsVerifying] = useState(false);
  const [authLoading, setAuthLoading] = useState(false);
  // -------------------------------------------------------
+
+ // --- DONNÉES IMPORTÉES LOCALEMENT (state + localStorage) ---
+ const [importedData, setImportedData] = useState<ReturnType<typeof formatRow>[]>(
+  () => readLocal<ReturnType<typeof formatRow>[]>(LOCAL_DATA_KEY, [])
+ );
+ // Villes distinctes détectées dans les données importées
+ const villesImportees = Array.from(
+  new Set(importedData.map((d) => d.Ville).filter(Boolean))
+ );
+ // ----------------------------------------------------------
 
  const [showCalendar, setShowCalendar] = useState(false);
  const [processingSubStep, setProcessingSubStep] = useState<'downloading' | 'analyzing'>('downloading');
@@ -157,53 +209,63 @@ export default function App() {
 // GA4 : TRACKING DU CLIC
    ReactGA.event({ category: "Conversion", action: "upload_excel", label: "Version A" });
 
- // --- LOGIQUE D'IMPORTATION SÉCURISÉE ---
+ // --- LOGIQUE D'IMPORTATION LOCALE (CSV / EXCEL) ---
  const handleFileUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
   const file = e.target.files?.[0];
-  if (file) {if (file.size > 5 * 1024 * 1024) {
-      alert("Fichier trop volumineux ! La taille maximum autorisée est de 5 Mo.");
-      return;
-    }
-   
-   const reader = new FileReader();
-   reader.onload = async (evt) => {
-    try {
-     const bstr = evt.target?.result;
-     const wb = XLSX.read(bstr, { type: 'binary' });
-     const jsonData = XLSX.utils.sheet_to_json(wb.Sheets[wb.SheetNames[0]]);
+  if (!file) return;
 
-     const cleanData = jsonData.map((item: any) => ({
-      code_article: String(item.code_article || ''),
-      famille_produit: String(item.famille_produit || ''),
-      date_transaction: String(item.date_transaction || ''),
-      quantite_vendue: parseInt(item.quantite_vendue) || 0,
-      point_de_vente: String(item.point_de_vente || ''),
-      stock_actuel: parseInt(item.stock_actuel) || 0,
-      prix_vente_ht: String(item.prix_vente_ht || '0')
-     }));
-
-     const { error } = await supabase.from('produit').insert(cleanData);
-     if (error) throw error;
-
-     const newFile: ImportedFile = {
-      name: file.name,
-      size: (file.size / (1024 * 1024)).toFixed(1) + ' MB',
-      date: new Date().toLocaleDateString('fr-FR', { day: 'numeric', month: 'long', year: 'numeric', hour: '2-digit', minute: '2-digit' }),
-      count: cleanData.length
-     };
-     setState(prev => ({ ...prev, importedFile: newFile }));
-     alert("Données envoyées avec succès à Supabase !");
-     
-    } catch (err: any) {
-     console.error("Erreur base de données:", err.message);
-     alert("Le fichier a été lu mais n'a pas pu être enregistré dans Supabase : " + err.message);
-    }
-   };
-   reader.readAsBinaryString(file);
+  if (file.size > 5 * 1024 * 1024) {
+   alert("Fichier trop volumineux ! La taille maximum autorisée est de 5 Mo.");
+   return;
   }
+
+  const reader = new FileReader();
+  reader.onload = (evt) => {
+   try {
+    const bstr = evt.target?.result;
+    const wb = XLSX.read(bstr, { type: 'binary' });
+    const jsonData = XLSX.utils.sheet_to_json(wb.Sheets[wb.SheetNames[0]]);
+
+    // Lecture des colonnes attendues + ajout de la propriété Ville
+    const formattedData = (jsonData as any[]).map(formatRow);
+
+    // 1) State React
+    setImportedData(formattedData);
+
+    const newFile: ImportedFile = {
+     name: file.name,
+     size: (file.size / (1024 * 1024)).toFixed(1) + ' MB',
+     date: new Date().toLocaleDateString('fr-FR', { day: 'numeric', month: 'long', year: 'numeric', hour: '2-digit', minute: '2-digit' }),
+     count: formattedData.length
+    };
+
+    // 2) localStorage (survit au rafraîchissement de la page)
+    try {
+     localStorage.setItem(LOCAL_DATA_KEY, JSON.stringify(formattedData));
+     localStorage.setItem(LOCAL_META_KEY, JSON.stringify(newFile));
+    } catch (storageErr) {
+     console.warn("Impossible d'écrire dans le localStorage :", storageErr);
+    }
+
+    setState(prev => ({ ...prev, importedFile: newFile }));
+
+    alert("Données importées localement et prêtes pour l'analyse");
+   } catch (err: any) {
+    console.error("Erreur de lecture du fichier :", err?.message || err);
+    alert("Impossible de lire le fichier : " + (err?.message || "format non reconnu"));
+   }
+  };
+  reader.readAsBinaryString(file);
  };
 
  const removeFile = () => {
+  setImportedData([]);
+  try {
+   localStorage.removeItem(LOCAL_DATA_KEY);
+   localStorage.removeItem(LOCAL_META_KEY);
+  } catch {
+   /* ignore */
+  }
   setState(prev => ({ ...prev, importedFile: null }));
  };
 
@@ -1611,7 +1673,7 @@ export default function App() {
         <motion.div initial={{ opacity: 0, scale: 0.95 }} animate={{ opacity: 1, scale: 1 }} exit={{ opacity: 0, scale: 0.95 }} className="p-6 border-2 border-blue-100 bg-blue-50/30 rounded-2xl relative group" >
          <div className="flex items-center gap-4">
           <div className="w-12 h-12 bg-blue-100 rounded-xl flex items-center justify-center text-blue-600"> <FileText size={24} /> </div>
-          <div className="flex-1 min-w-0"> <h4 className="font-bold text-slate-900 truncate">{state.importedFile.name}</h4> <p className="text-xs text-slate-500">{state.importedFile.size} • Importé le {state.importedFile.date}</p> <div className="mt-3 inline-flex items-center px-2 py-1 bg-white rounded-md text-[10px] font-bold text-slate-600 border border-slate-100"> {state.importedFile.count} produits importés </div> </div>
+          <div className="flex-1 min-w-0"> <h4 className="font-bold text-slate-900 truncate">{state.importedFile.name}</h4> <p className="text-xs text-slate-500">{state.importedFile.size} • Importé le {state.importedFile.date}</p> <div className="mt-3 flex flex-wrap items-center gap-2"> <span className="inline-flex items-center px-2 py-1 bg-white rounded-md text-[10px] font-bold text-slate-600 border border-slate-100"> {state.importedFile.count} produits importés </span> {villesImportees.length > 0 && ( <span className="inline-flex items-center px-2 py-1 bg-white rounded-md text-[10px] font-bold text-slate-600 border border-slate-100"> {villesImportees.length} ville{villesImportees.length > 1 ? 's' : ''} : {villesImportees.join(', ')} </span> )} </div> </div>
           <div className="flex items-center gap-2"> <button className="p-2 text-slate-400 hover:text-slate-600 transition-colors"> <Plus size={18} /> </button> <button onClick={removeFile} className="p-2 text-slate-400 hover:text-red-500 transition-colors" > <Trash2 size={18} /> </button> </div>
          </div>
         </motion.div>
