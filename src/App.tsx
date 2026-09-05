@@ -65,10 +65,13 @@ import * as XLSX from 'xlsx';
 import {
  addDays,
  buildChartSeries,
+ buildExportCsv,
  buildHistorique,
  computeIndicateurs,
  debutDeJour,
  joursCouverts,
+ mergeImportedRows,
+ moisCouverts,
  resumeHistorique,
  computeDashboardKpis,
  filterRowsByRange,
@@ -325,58 +328,88 @@ export default function App() {
 // GA4 : TRACKING DU CLIC
    ReactGA.event({ category: "Conversion", action: "upload_excel", label: "Version A" });
 
- // --- LOGIQUE D'IMPORTATION LOCALE (CSV / EXCEL) ---
- const handleFileUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
-  const file = e.target.files?.[0];
-  if (!file) return;
+ /** Lit un fichier et le transforme en lignes normalisées. */
+ const lireFichier = (file: File): Promise<ImportedRow[]> =>
+  new Promise((resolve, reject) => {
+   const reader = new FileReader();
+   reader.onerror = () => reject(new Error(`Lecture impossible : ${file.name}`));
+   reader.onload = (evt) => {
+    try {
+     const buffer = new Uint8Array(evt.target?.result as ArrayBuffer);
+     const wb = XLSX.read(buffer, {
+      type: 'array',
+      codepage: 65001, // CSV en UTF-8 : évite « Prêt-à-porter » -> « PrÃªt-Ã -porter »
+      cellDates: true, // évite que Date_Transaction arrive en numéro de série Excel
+      dateNF: 'dd/mm/yyyy' // dates françaises : 12/03/2026 = 12 mars, pas 3 décembre
+     });
+     const jsonData = XLSX.utils.sheet_to_json(wb.Sheets[wb.SheetNames[0]]);
+     resolve((jsonData as any[]).map(formatRow));
+    } catch (err: any) {
+     reject(new Error(`${file.name} : ${err?.message || 'format non reconnu'}`));
+    }
+   };
+   reader.readAsArrayBuffer(file);
+  });
 
-  if (file.size > 5 * 1024 * 1024) {
-   alert("Fichier trop volumineux ! La taille maximum autorisée est de 5 Mo.");
+ // --- IMPORTATION LOCALE MULTI-FICHIERS (CSV / EXCEL) ---
+ const handleFileUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
+  const fichiers: File[] = Array.from(e.target.files ?? []);
+  if (fichiers.length === 0) return;
+
+  const tropGros = fichiers.filter(f => f.size > 5 * 1024 * 1024);
+  if (tropGros.length > 0) {
+   alert(`Fichier trop volumineux (5 Mo maximum) : ${tropGros.map(f => f.name).join(', ')}`);
    return;
   }
 
-  const reader = new FileReader();
-  reader.onload = (evt) => {
+  try {
+   const lots = await Promise.all(fichiers.map(lireFichier));
+
+   // On cumule avec l'historique déjà chargé : un fichier par exercice suffit
+   // ainsi à constituer plusieurs années de profondeur. Les doublons stricts
+   // sont écartés, un même fichier réimporté ne compte donc pas deux fois.
+   const fusion = mergeImportedRows(importedData, ...lots);
+   const ajoutees = fusion.length - importedData.length;
+
+   setImportedData(fusion);
+
+   const tailleTotale = fichiers.reduce((somme, f) => somme + f.size, 0);
+   const sourcesPrecedentes = state.importedFile?.sources ?? [];
+   const sources = Array.from(new Set([...sourcesPrecedentes, ...fichiers.map(f => f.name)]));
+   const newFile: ImportedFile = {
+    name: sources.length === 1 ? sources[0] : `${sources.length} fichiers importés`,
+    size: (tailleTotale / (1024 * 1024)).toFixed(1) + ' MB',
+    date: new Date().toLocaleDateString('fr-FR', { day: 'numeric', month: 'long', year: 'numeric', hour: '2-digit', minute: '2-digit' }),
+    count: fusion.length,
+    sources
+   };
+
    try {
-    const buffer = new Uint8Array(evt.target?.result as ArrayBuffer);
-    const wb = XLSX.read(buffer, {
-     type: 'array',
-     codepage: 65001, // CSV en UTF-8 : évite « Prêt-à-porter » -> « PrÃªt-Ã -porter »
-     cellDates: true, // évite que Date_Transaction arrive en numéro de série Excel
-     dateNF: 'dd/mm/yyyy' // dates françaises : 12/03/2026 = 12 mars, pas 3 décembre
-    });
-    const jsonData = XLSX.utils.sheet_to_json(wb.Sheets[wb.SheetNames[0]]);
-
-    // Lecture des colonnes attendues + ajout de la propriété Ville
-    const formattedData = (jsonData as any[]).map(formatRow);
-
-    // 1) State React
-    setImportedData(formattedData);
-
-    const newFile: ImportedFile = {
-     name: file.name,
-     size: (file.size / (1024 * 1024)).toFixed(1) + ' MB',
-     date: new Date().toLocaleDateString('fr-FR', { day: 'numeric', month: 'long', year: 'numeric', hour: '2-digit', minute: '2-digit' }),
-     count: formattedData.length
-    };
-
-    // 2) localStorage (survit au rafraîchissement de la page)
-    try {
-     localStorage.setItem(LOCAL_DATA_KEY, JSON.stringify(formattedData));
-     localStorage.setItem(LOCAL_META_KEY, JSON.stringify(newFile));
-    } catch (storageErr) {
-     console.warn("Impossible d'écrire dans le localStorage :", storageErr);
-    }
-
-    setState(prev => ({ ...prev, importedFile: newFile }));
-
-    alert("Données importées localement et prêtes pour l'analyse");
-   } catch (err: any) {
-    console.error("Erreur de lecture du fichier :", err?.message || err);
-    alert("Impossible de lire le fichier : " + (err?.message || "format non reconnu"));
+    localStorage.setItem(LOCAL_DATA_KEY, JSON.stringify(fusion));
+    localStorage.setItem(LOCAL_META_KEY, JSON.stringify(newFile));
+   } catch (storageErr) {
+    console.warn("Impossible d'écrire dans le localStorage :", storageErr);
    }
-  };
-  reader.readAsArrayBuffer(file);
+
+   setState(prev => ({ ...prev, importedFile: newFile }));
+
+   const mois = moisCouverts(fusion);
+   const periode = mois.length > 1 ? ` — ${mois.length} mois couverts (${mois[0]} → ${mois[mois.length - 1]})` : '';
+   const doublons = lots.reduce((s, l) => s + l.length, 0) - ajoutees;
+   alert(
+    `Données importées localement et prêtes pour l'analyse\n\n` +
+    `${fichiers.length} fichier${fichiers.length > 1 ? 's' : ''} lu${fichiers.length > 1 ? 's' : ''}, ` +
+    `${ajoutees} nouvelle${ajoutees > 1 ? 's' : ''} ligne${ajoutees > 1 ? 's' : ''}` +
+    `${doublons > 0 ? ` (${doublons} doublon${doublons > 1 ? 's' : ''} ignoré${doublons > 1 ? 's' : ''})` : ''}` +
+    `${periode}`
+   );
+  } catch (err: any) {
+   console.error('Erreur de lecture du fichier :', err?.message || err);
+   alert('Impossible de lire le fichier : ' + (err?.message || 'format non reconnu'));
+  } finally {
+   // Permet de réimporter le même fichier juste après.
+   e.target.value = '';
+  }
  };
 
  const removeFile = () => {
@@ -1265,16 +1298,17 @@ export default function App() {
             />
             <div className="flex-1 min-w-0">
              <h4 className="text-sm font-bold truncate">{item.designation}</h4>
-             <p className="text-[10px] text-slate-400">
-              {item.stock === 0 ? 'Rupture en boutique' : `${item.stock} u. dans la boutique la plus basse`}
-             </p>
+             <p className="text-[10px] text-slate-400 truncate">{item.boutique}</p>
             </div>
             <div className={`w-2.5 h-2.5 rounded-full shrink-0 ${
              item.statut === 'red' ? 'bg-red-500' : 'bg-yellow-400'
             }`} />
+            {/* Valeur exacte du Stock_Actuel plutôt qu'une moyenne de ventes. */}
             <div className="text-right shrink-0">
-             <p className="text-sm font-bold">{formatVentes(item.ventesHebdo)}/sem</p>
-             <p className="text-[10px] text-slate-400 uppercase font-bold">Ventes moy.</p>
+             <p className={`text-sm font-bold ${item.statut === 'red' ? 'text-red-500' : 'text-slate-900'}`}>
+              {item.stock}
+             </p>
+             <p className="text-[10px] text-slate-400 uppercase font-bold">Stock actuel</p>
             </div>
            </button>
           ))
@@ -1483,12 +1517,13 @@ export default function App() {
    : [];
   const jours = joursCouverts(lignesSku);
 
-  // Couverture et risque, sans puis avec ajustement météo.
+  // Couverture et risque, tous deux ramenés à l'horizon fixe de 7 jours :
+  // sur la quantité brute d'abord, sur la prévision météo ensuite.
   const indicInitial = activeSku
-   ? computeIndicateurs(activeSku.stockActuel, activeSku.quantiteVendue, activeSku.totalReassortBase, jours)
+   ? computeIndicateurs(activeSku.stockActuel, activeSku.quantiteVendue, jours)
    : null;
   const indicIA = activeSku
-   ? computeIndicateurs(activeSku.stockActuel, activeSku.previsionIA, activeSku.totalReassort, jours)
+   ? computeIndicateurs(activeSku.stockActuel, activeSku.previsionIA, jours)
    : null;
 
   const HISTORIQUE = activeSku ? buildHistorique(forecastRows, activeSku.sku) : [];
@@ -1582,7 +1617,7 @@ export default function App() {
           <p className="text-xl lg:text-[30px] font-semibold text-black">
            {indicInitial ? `${formatJours(indicInitial.couvertureJours)}J` : '5J'}
           </p>
-          <p className="text-sm lg:text-[19.23px] text-black/45 font-normal">avec commande</p>
+          <p className="text-sm lg:text-[19.23px] text-black/45 font-normal">stock actuel / ventes 7J</p>
          </div>
          <div className="bg-white p-4 rounded shadow-sm">
           <p className="text-xs lg:text-base text-black/65 mb-1 lg:mb-2 flex items-center gap-1.5">
@@ -1592,7 +1627,7 @@ export default function App() {
           <p className="text-xl lg:text-[30px] font-semibold text-black">
            {indicInitial ? `${Math.round(indicInitial.risquePct)}%` : '65%'}
           </p>
-          <p className="text-sm lg:text-[19.23px] text-[#CF1322] font-normal">Sans commande</p>
+          <p className="text-sm lg:text-[19.23px] text-[#CF1322] font-normal">sur 7 jours, sans commande</p>
          </div>
         </div>
        </div>
@@ -1645,7 +1680,7 @@ export default function App() {
           <p className="text-xl lg:text-[30px] font-semibold text-black">
            {indicIA ? `${formatJours(indicIA.couvertureJours)}J` : '7J'}
           </p>
-          <p className="text-sm lg:text-[19.23px] text-black/45 font-normal">avec commande</p>
+          <p className="text-sm lg:text-[19.23px] text-black/45 font-normal">stock actuel / ventes 7J</p>
          </div>
          <div className="bg-white p-2 rounded">
           <p className="text-xs lg:text-base text-black/65 mb-1 lg:mb-2 flex items-center gap-1.5">
@@ -1655,7 +1690,7 @@ export default function App() {
           <p className="text-xl lg:text-[30px] font-semibold text-black">
            {indicIA ? `${Math.round(indicIA.risquePct)}%` : '92%'}
           </p>
-          <p className="text-sm lg:text-[19.23px] text-[#CF1322] font-normal">Sans commande</p>
+          <p className="text-sm lg:text-[19.23px] text-[#CF1322] font-normal">sur 7 jours, sans commande</p>
          </div>
         </div>
        </div>
@@ -1858,6 +1893,43 @@ export default function App() {
   const resteAReparti = objectifTotal - totalReparti;
 
   const totalAllocation = distributionManuelle ? totalReparti : recommandationSku;
+
+  // --- Bilan prévisionnel : aucune valeur en dur ---
+  const lignesSkuDistrib = activeSku
+   ? forecastRows.filter(r => r.Code_Article === activeSku.sku)
+   : [];
+  const joursDistrib = joursCouverts(lignesSkuDistrib);
+  const indicDistrib = activeSku
+   ? computeIndicateurs(activeSku.stockActuel, activeSku.previsionIA, joursDistrib)
+   : null;
+  // Prix unitaire moyen constaté = CA réalisé / quantités vendues.
+  const prixUnitaireMoyen =
+   activeSku && activeSku.quantiteVendue > 0 ? activeSku.caHt / activeSku.quantiteVendue : 0;
+  const caPrevu = objectifTotal * prixUnitaireMoyen;
+
+  /** Génère et télécharge le rapport CSV complet. */
+  const telechargerRapportCsv = () => {
+   const allocationsNumeriques: Record<string, number> = {};
+   for (const [pdv, valeur] of Object.entries(allocationsManuelles)) {
+    allocationsNumeriques[pdv] = Number(valeur) || 0;
+   }
+   const csv = buildExportCsv(activeSku ? [activeSku] : skus, {
+    decisions: activeSku ? { [activeSku.sku]: objectifTotal } : {},
+    allocations: allocationsNumeriques,
+    modeManuel: distributionManuelle
+   });
+
+   // BOM UTF-8 : sans lui, Excel affiche « PrÃªt-Ã -porter ».
+   const blob = new Blob(['﻿' + csv], { type: 'text/csv;charset=utf-8;' });
+   const url = URL.createObjectURL(blob);
+   const lien = document.createElement('a');
+   lien.href = url;
+   lien.download = `smart-retail-previsions-${new Date().toISOString().slice(0, 10)}.csv`;
+   document.body.appendChild(lien);
+   lien.click();
+   document.body.removeChild(lien);
+   URL.revokeObjectURL(url);
+  };
 
   return (
    <div className="flex h-screen bg-white font-sans text-slate-900 overflow-hidden relative">
@@ -2115,17 +2187,24 @@ export default function App() {
           >
            {exportingState === 'syncing' ? ( <> <div className="w-4 h-4 lg:w-6 lg:h-6 border-4 border-white/30 border-t-white rounded-full animate-spin" /> Synchronisation... </> ) : ( 'Envoyer vers l’ERP' )}
           </button>
-          <button 
+          {/* Génère et télécharge réellement le fichier, puis confirme. */}
+          <button
            onClick={() => {
             setExportingState('downloading');
+            try {
+             telechargerRapportCsv();
+            } catch (err: any) {
+             console.error('Export CSV impossible :', err?.message || err);
+            }
             setTimeout(() => {
              setExportingState('idle');
              setState(prev => ({ ...prev, step: 'download-success' }));
-            }, 2000);
+            }, 1200);
            }}
-           className="w-full py-2 lg:py-4 bg-white border border-[#D9D9D9] text-black/65 rounded text-sm lg:text-base font-semibold shadow-sm hover:bg-slate-50 transition-all"
+           className="w-full py-2 lg:py-4 bg-white border-2 border-[#0958D9] text-[#0958D9] rounded text-sm lg:text-base font-bold shadow-sm hover:bg-[#F0F7FF] transition-all flex items-center justify-center gap-2"
           >
-           Exporter en CSV
+           <UploadCloud size={18} className="rotate-180" />
+           Exporter le rapport CSV
           </button>
           <button 
            onClick={() => {
@@ -2144,11 +2223,50 @@ export default function App() {
 
         <div className="p-4 lg:p-8 bg-white border border-[#D9D9D9] rounded-xl space-y-8">
          <h3 className="text-lg lg:text-2xl font-semibold text-black/88">Bilan prévisionnel</h3>
+         {/* Chaque ligne est recalculée : rien n'est écrit en dur. */}
          <div className="space-y-6">
-          <div className="flex justify-between items-center"> <span className="text-base lg:text-xl text-black/65">CA Prévu</span> <span className="text-lg lg:text-2xl font-bold text-black/88">€19,800</span> </div>
-          <div className="flex justify-between items-center"> <span className="text-base lg:text-xl text-black/65">Marge Bénéficiaire</span> <span className="text-lg lg:text-2xl font-bold text-[#0958D9]">+38%</span> </div>
-          <div className="flex justify-between items-center"> <span className="text-base lg:text-xl text-black/65">Filabilité Stock</span> <span className="text-lg lg:text-2xl font-bold text-[#0958D9]">92%</span> </div>
-          <div className="flex justify-between items-center"> <span className="text-base lg:text-xl text-black/65">Période de couverture</span> <span className="text-lg lg:text-2xl font-bold text-black/88">7 Jours</span> </div>
+          <div className="flex justify-between items-center gap-4">
+           <span className="text-base lg:text-xl text-black/65 flex items-center gap-1.5">
+            CA Prévu
+            <InfoTooltip texte={`Quantité retenue (${objectifTotal} u.) multipliée par le prix unitaire moyen constaté dans votre fichier (${prixUnitaireMoyen.toFixed(2)} € HT), obtenu en divisant le CA réalisé par les quantités vendues.`} />
+           </span>
+           <span className="text-lg lg:text-2xl font-bold text-black/88 text-right">
+            {activeSku
+             ? new Intl.NumberFormat('fr-FR', { style: 'currency', currency: 'EUR', maximumFractionDigits: 0 }).format(caPrevu)
+             : '—'}
+           </span>
+          </div>
+          <div className="flex justify-between items-center gap-4">
+           <span className="text-base lg:text-xl text-black/65 flex items-center gap-1.5">
+            Impact météo
+            <InfoTooltip texte="Écart entre la prévision ajustée par Open-Meteo et la prévision brute issue du seul historique. La marge bénéficiaire n'est pas affichée : votre fichier ne contient aucune donnée de coût d'achat." />
+           </span>
+           <span className="text-lg lg:text-2xl font-bold text-[#0958D9] text-right">
+            {activeSku ? `${activeSku.upliftPct >= 0 ? '+' : ''}${Math.round(activeSku.upliftPct)}%` : '—'}
+           </span>
+          </div>
+          <div className="flex justify-between items-center gap-4">
+           <span className="text-base lg:text-xl text-black/65 flex items-center gap-1.5">
+            Fiabilité Stock
+            <InfoTooltip texte="Part de la demande des 7 prochains jours que le stock actuel couvre déjà, avant réassort. Complément du risque de rupture." />
+           </span>
+           <span className={`text-lg lg:text-2xl font-bold text-right ${
+            indicDistrib && indicDistrib.fiabilitePct < 50 ? 'text-[#CF1322]' : 'text-[#0958D9]'
+           }`}>
+            {indicDistrib ? `${Math.round(indicDistrib.fiabilitePct)}%` : '—'}
+           </span>
+          </div>
+          <div className="flex justify-between items-center gap-4">
+           <span className="text-base lg:text-xl text-black/65 flex items-center gap-1.5">
+            Période de couverture
+            <InfoTooltip texte="Stock actuel divisé par les ventes journalières moyennes mesurées sur la période couverte par votre fichier." />
+           </span>
+           <span className="text-lg lg:text-2xl font-bold text-black/88 text-right">
+            {indicDistrib
+             ? `${indicDistrib.couvertureJours < 10 ? indicDistrib.couvertureJours.toFixed(1) : Math.round(indicDistrib.couvertureJours)} Jours`
+             : '—'}
+           </span>
+          </div>
          </div>
         </div>
        </div>
@@ -2410,7 +2528,7 @@ export default function App() {
         </motion.div>
        ) : (
         <div className="grid grid-cols-2 gap-4">
-         <button onClick={() => fileInputRef.current?.click()} className="flex flex-col items-center justify-center p-8 border-2 border-dashed border-slate-200 rounded-2xl hover:border-blue-400 hover:bg-blue-50/50 transition-all group" > <div className="w-12 h-12 bg-blue-50 rounded-full flex items-center justify-center text-blue-500 mb-4 group-hover:scale-110 transition-transform"> <Upload size={24} /> </div> <span className="font-bold text-sm mb-1">Importer un CSV</span> <span className="text-[10px] text-slate-400 text-center">Téléchargez votre fichier produits</span> <input type="file" ref={fileInputRef} onChange={handleFileUpload} className="hidden" accept=".csv, .xlsx" /> </button>
+         <button onClick={() => fileInputRef.current?.click()} className="flex flex-col items-center justify-center p-8 border-2 border-dashed border-slate-200 rounded-2xl hover:border-blue-400 hover:bg-blue-50/50 transition-all group" > <div className="w-12 h-12 bg-blue-50 rounded-full flex items-center justify-center text-blue-500 mb-4 group-hover:scale-110 transition-transform"> <Upload size={24} /> </div> <span className="font-bold text-sm mb-1">Importer des fichiers</span> <span className="text-[10px] text-slate-400 text-center">Plusieurs fichiers acceptés : un par exercice pour bâtir l'historique</span> <input type="file" multiple ref={fileInputRef} onChange={handleFileUpload} className="hidden" accept=".csv, .xlsx, .xls" /> </button>
          <button onClick={handleErpConnect} disabled={state.isConnectingErp} className={`flex flex-col items-center justify-center p-8 border-2 border-dashed rounded-2xl transition-all group ${ state.isErpConnected ? 'border-purple-400 bg-purple-50/50' : state.isConnectingErp ? 'border-purple-200 bg-purple-50/30 cursor-wait' : 'border-slate-200 hover:border-purple-400 hover:bg-purple-50/50' }`} >
           <div className={`w-12 h-12 rounded-full flex items-center justify-center mb-4 group-hover:scale-110 transition-transform ${ state.isErpConnected ? 'bg-purple-100 text-purple-600' : state.isConnectingErp ? 'bg-purple-50 text-purple-400' : 'bg-purple-50 text-purple-500' }`}> {state.isConnectingErp ? ( <div className="w-6 h-6 border-2 border-purple-500 border-t-transparent rounded-full animate-spin" /> ) : state.isErpConnected ? ( <CheckCircle2 size={24} /> ) : ( <Database size={24} /> )} </div>
           <span className="font-bold text-sm mb-1"> {state.isConnectingErp ? 'Connexion...' : state.isErpConnected ? 'ERP Connecté' : 'acceder a ERP'} </span>

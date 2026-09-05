@@ -15,6 +15,8 @@ export interface Objectives {
 
 export interface ImportedFile {
   name: string;
+  /** Noms des fichiers cumules dans cet historique. */
+  sources?: string[];
   size: string;
   date: string;
   count: number;

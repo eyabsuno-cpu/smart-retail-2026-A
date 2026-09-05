@@ -67,6 +67,8 @@ export interface SkuAggregate {
  quantiteVendue: number;
  stockActuel: number;
  previsionIA: number;
+ /** Chiffre d affaires HT realise sur la periode, pour le bilan previsionnel. */
+ caHt: number;
  /** Total consolidé affiché sur la grande carte « Prévision IA ». */
  totalReassort: number;
  /** Même total, sans ajustement météo (carte « Prévision initiale »). */
@@ -480,6 +482,7 @@ export const aggregateBySku = (rows: ForecastRow[]): SkuAggregate[] => {
    designation: first.Designation || sku,
    famille: first.Famille_Produit,
    quantiteVendue: sum(skuRows, (r) => r.Quantite_Vendue),
+   caHt: sum(skuRows, (r) => r.CA_HT),
    // Le stock est un état, pas un flux : on somme une valeur par boutique et
    // non toutes les lignes, sinon une boutique présente sur 20 dates verrait
    // son stock compté 20 fois.
@@ -814,6 +817,8 @@ export const searchSkus = (skus: SkuAggregate[], query: string): SkuAggregate[] 
 export interface RuptureItem {
  sku: string;
  designation: string;
+ /** Point de vente où le stock est le plus bas. */
+ boutique: string;
  /** Stock cumulé sur l'ensemble des boutiques. */
  stock: number;
  /** Ventes moyennes hebdomadaires réellement observées. */
@@ -840,6 +845,8 @@ const totauxParSku = (rows: ForecastRow[]) => {
    stock: number;
    /** Stock de la boutique la plus basse : c'est là que la rupture survient. */
    stockMin: number;
+   /** Point de vente portant ce stock minimal. */
+   boutiqueMin: string;
    quantite: number;
    caHt: number;
   }
@@ -848,9 +855,12 @@ const totauxParSku = (rows: ForecastRow[]) => {
   const sku = r.Code_Article || '—';
   const acc =
    map.get(sku) ??
-   { sku, designation: r.Designation || sku, stock: 0, stockMin: Infinity, quantite: 0, caHt: 0 };
+   { sku, designation: r.Designation || sku, stock: 0, stockMin: Infinity, boutiqueMin: r.Point_de_Vente, quantite: 0, caHt: 0 };
   acc.stock += r.Stock_Actuel;
-  acc.stockMin = Math.min(acc.stockMin, r.Stock_Actuel);
+  if (r.Stock_Actuel < acc.stockMin) {
+   acc.stockMin = r.Stock_Actuel;
+   acc.boutiqueMin = r.Point_de_Vente;
+  }
   acc.quantite += r.Quantite_Vendue;
   acc.caHt += r.CA_HT;
   if (!acc.designation || acc.designation === sku) acc.designation = r.Designation || sku;
@@ -882,6 +892,7 @@ export const getRuptures = (
   items.push({
    sku: t.sku,
    designation: t.designation,
+   boutique: t.boutiqueMin,
    stock: t.stockMin,
    // Non arrondi : l'UI décide de l'affichage (« 0,5/sem » plutôt que « 0/sem »).
    ventesHebdo,
@@ -930,34 +941,51 @@ export const joursCouverts = (rows: ImportedRow[]): number => {
  return Math.max(1, Math.round((range.fin.getTime() - range.debut.getTime()) / JOUR_MS) + 1);
 };
 
+/** Horizon de référence de toute l'application : une semaine. */
+export const HORIZON_JOURS = 7;
+
 export interface IndicateursSku {
- /** Jours de vente que couvrent le stock et le réassort recommandé. */
+ /** Ventes journalières moyennes observées sur la période du fichier. */
+ ventesJournalieres: number;
+ /** Demande attendue sur l'horizon de 7 jours. */
+ demandeHebdomadaire: number;
+ /** Jours d'autonomie du stock actuel face à cette demande. */
  couvertureJours: number;
- /** Part de la demande prévue que le stock seul ne couvre pas, en %. */
+ /** Part de la demande hebdomadaire que le stock ne couvre pas, en %. */
  risquePct: number;
+ /** Complément du risque : 100 % = le stock couvre toute la semaine. */
+ fiabilitePct: number;
 }
 
 /**
- * Couverture et risque de rupture d'un SKU.
+ * Couverture et risque d'un SKU, tous deux ramenés à l'horizon fixe de 7 jours.
  *
- * - couverture = (stock + réassort commandé) / demande journalière prévue,
- *   d'où le libellé « avec commande » : c'est l'autonomie après réassort.
- * - risque = fraction de la demande prévue non couverte par le stock seul,
- *   d'où le libellé « sans commande ». Borné à [0, 100].
+ *   ventes journalières = quantité vendue / jours couverts par le fichier
+ *   demande hebdomadaire = ventes journalières x 7
+ *   couverture           = Stock_Actuel / ventes journalières
+ *   risque               = (demande hebdo - stock) / demande hebdo
+ *
+ * Rien n'est figé : `quantitePeriode` et `jours` viennent du fichier importé.
+ * Passer la prévision ajustée par la météo au lieu de la quantité brute donne
+ * les indicateurs du bloc « Prévision IA ».
  */
 export const computeIndicateurs = (
  stock: number,
- demandePrevue: number,
- reassort: number,
+ quantitePeriode: number,
  jours: number
 ): IndicateursSku => {
- const demandeJournaliere = jours > 0 ? demandePrevue / jours : 0;
+ const ventesJournalieres = jours > 0 ? quantitePeriode / jours : 0;
+ const demandeHebdomadaire = ventesJournalieres * HORIZON_JOURS;
+ const risquePct =
+  demandeHebdomadaire > 0
+   ? Math.max(0, Math.min(100, ((demandeHebdomadaire - stock) / demandeHebdomadaire) * 100))
+   : 0;
  return {
-  couvertureJours: demandeJournaliere > 0 ? (stock + reassort) / demandeJournaliere : 0,
-  risquePct:
-   demandePrevue > 0
-    ? Math.max(0, Math.min(100, ((demandePrevue - stock) / demandePrevue) * 100))
-    : 0
+  ventesJournalieres,
+  demandeHebdomadaire,
+  couvertureJours: ventesJournalieres > 0 ? stock / ventesJournalieres : 0,
+  risquePct,
+  fiabilitePct: 100 - risquePct
  };
 };
 
@@ -1059,4 +1087,127 @@ export const resumeHistorique = (
   erreurMoyenneIA: historique.reduce((s, h) => s + Math.abs(h.ecartIA), 0) / total,
   erreurMoyenneInitiale: historique.reduce((s, h) => s + Math.abs(h.ecartInitiale), 0) / total
  };
+};
+
+// ---------------------------------------------------------------------------
+// 9. Import multi-fichiers et export CSV
+// ---------------------------------------------------------------------------
+
+/**
+ * Identité d'une transaction, servant à dédoublonner.
+ * Réimporter deux fois le même fichier ne doit pas compter les ventes double.
+ */
+const cleLigne = (r: ImportedRow): string =>
+ [r.Code_Article, r.Date_Transaction, r.Point_de_Vente, r.Quantite_Vendue, r.CA_HT].join('|');
+
+/**
+ * Fusionne plusieurs lots de lignes en un historique unique.
+ *
+ * Permet de charger un fichier par exercice (2025, puis 2026) et d'obtenir
+ * la profondeur d'historique nécessaire à la comparaison prévision / réalisé.
+ * Les doublons stricts sont écartés ; le résultat est trié par date.
+ */
+export const mergeImportedRows = (...lots: ImportedRow[][]): ImportedRow[] => {
+ // Le dédoublonnage joue entre lots, jamais à l'intérieur d'un lot : deux
+ // ventes identiques le même jour dans la même boutique sont plausibles et
+ // doivent se cumuler, alors que réimporter le même fichier ne doit rien
+ // ajouter.
+ const vues = new Set<string>();
+ const fusion: ImportedRow[] = [];
+ for (const lot of lots) {
+  const clesDuLot: string[] = [];
+  for (const ligne of lot) {
+   const cle = cleLigne(ligne);
+   clesDuLot.push(cle);
+   if (vues.has(cle)) continue;
+   fusion.push(ligne);
+  }
+  for (const cle of clesDuLot) vues.add(cle);
+ }
+ return fusion.sort((a, b) => a.Date_Transaction.localeCompare(b.Date_Transaction));
+};
+
+/** Mois distincts couverts par les données, du plus ancien au plus récent. */
+export const moisCouverts = (rows: ImportedRow[]): string[] =>
+ Array.from(new Set(rows.map((r) => r.Date_Transaction.slice(0, 7)).filter((m) => m.length === 7))).sort();
+
+/** Échappe une valeur pour un CSV à séparateur point-virgule. */
+const champCsv = (valeur: string | number): string => {
+ const texte = String(valeur ?? '');
+ return /[";\n\r]/.test(texte) ? `"${texte.replace(/"/g, '""')}"` : texte;
+};
+
+/** Formate un nombre avec la virgule décimale attendue par Excel en français. */
+const nombreCsv = (n: number, decimales = 2): string =>
+ Number.isFinite(n) ? n.toFixed(decimales).replace('.', ',') : '0';
+
+export interface ExportOptions {
+ /** Quantité finalement retenue par l'utilisateur, par SKU. */
+ decisions?: Record<string, number>;
+ /** Quantité saisie à la main, par point de vente. */
+ allocations?: Record<string, number>;
+ /** Vrai si la répartition a été faite manuellement. */
+ modeManuel?: boolean;
+}
+
+/**
+ * Construit le rapport CSV complet : une ligne par couple SKU / boutique,
+ * avec les données sources, le contexte météo, la prévision IA, la
+ * répartition recommandée et la décision finale de l'utilisateur.
+ */
+export const buildExportCsv = (
+ skus: SkuAggregate[],
+ options: ExportOptions = {}
+): string => {
+ const { decisions = {}, allocations = {}, modeManuel = false } = options;
+
+ const entetes = [
+  'Code_Article',
+  'Designation',
+  'Famille_Produit',
+  'Point_de_Vente',
+  'Ville',
+  'Meteo',
+  'Coefficient_Meteo',
+  'Quantite_Vendue',
+  'Stock_Actuel',
+  'Prevision_IA',
+  'Reassort_Recommande',
+  'Allocation_Pct',
+  'Quantite_Retenue',
+  'Total_SKU_Recommande',
+  'Total_SKU_Retenu',
+  'Mode_Repartition'
+ ];
+
+ const lignes: string[] = [entetes.join(';')];
+
+ for (const s of skus) {
+  const totalRetenu = decisions[s.sku] ?? s.totalReassort;
+  for (const b of s.boutiques) {
+   const retenue = modeManuel ? (allocations[b.pointDeVente] ?? 0) : b.reassort;
+   lignes.push(
+    [
+     champCsv(s.sku),
+     champCsv(s.designation),
+     champCsv(s.famille),
+     champCsv(b.pointDeVente),
+     champCsv(b.ville),
+     champCsv(weatherLabel(b.weathercode)),
+     nombreCsv(b.coefficient),
+     String(b.quantiteVendue),
+     String(b.stockActuel),
+     String(b.previsionIA),
+     String(b.reassort),
+     nombreCsv(b.allocationPct, 1),
+     String(retenue),
+     String(s.totalReassort),
+     String(totalRetenu),
+     modeManuel ? 'Manuel' : 'Automatique'
+    ].join(';')
+   );
+  }
+ }
+
+ return lignes.join('\r\n');
 };
