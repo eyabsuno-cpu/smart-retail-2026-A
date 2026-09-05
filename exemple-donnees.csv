@@ -1,0 +1,18 @@
+Code_Article,Designation,Famille_Produit,Date_Transaction,Quantite_Vendue,Stock_Actuel,CA_HT,Point_de_Vente
+MAN-001,Manteau en laine col montant,Manteaux,2026-01-07,120,40,14400,Boutique_Paris_1
+MAN-001,Manteau en laine col montant,Manteaux,2026-01-07,85,30,10200,Boutique_Paris_2
+MAN-001,Manteau en laine col montant,Manteaux,2026-01-07,70,25,8400,Boutique_Lyon
+MAN-001,Manteau en laine col montant,Manteaux,2026-01-07,55,20,6600,Boutique_Lille
+MAN-001,Manteau en laine col montant,Manteaux,2026-01-07,40,50,4800,Boutique_Nice
+MAN-001,Manteau en laine col montant,Manteaux,2026-01-07,30,15,3600,Boutique_Bordeaux
+ACC-002,Echarpe cachemire,Accessoires,2026-01-07,95,35,4750,Boutique_Paris_1
+ACC-002,Echarpe cachemire,Accessoires,2026-01-07,60,20,3000,Boutique_Lyon
+ACC-002,Echarpe cachemire,Accessoires,2026-01-07,45,18,2250,Boutique_Lille
+ACC-002,Echarpe cachemire,Accessoires,2026-01-07,25,30,1250,Boutique_Nice
+BAI-003,Maillot de bain une piece,Bain,2026-01-07,80,25,3200,Boutique_Nice
+BAI-003,Maillot de bain une piece,Bain,2026-01-07,65,20,2600,Boutique_Bordeaux
+BAI-003,Maillot de bain une piece,Bain,2026-01-07,40,15,1600,Boutique_Marseille
+BAI-003,Maillot de bain une piece,Bain,2026-01-07,30,35,1200,Boutique_Lyon
+CHA-004,Bottines cuir,Chaussures,2026-01-07,70,30,7000,Boutique_Paris_1
+CHA-004,Bottines cuir,Chaussures,2026-01-07,50,22,5000,Boutique_Lyon
+CHA-004,Bottines cuir,Chaussures,2026-01-07,35,40,3500,Boutique_Lille

@@ -60,6 +60,11 @@ import { AppState, ImportedFile } from './types';
 import * as XLSX from 'xlsx';
 // ----------------------------------------
 
+// --- PRÉVISION MÉTÉO INTELLIGENTE ---
+import { formatRow, weatherLabel, type ImportedRow } from './lib/forecast';
+import { useForecast } from './hooks/useForecast';
+// ------------------------------------
+
 // Clés de stockage local pour les données importées
 const LOCAL_DATA_KEY = 'smartRetail_importedData';
 const LOCAL_META_KEY = 'smartRetail_importedFileMeta';
@@ -72,34 +77,6 @@ const readLocal = <T,>(key: string, fallback: T): T => {
  } catch {
   return fallback;
  }
-};
-
-// Extrait le nom de la ville depuis la valeur Point_de_Vente
-// Ex : 'Boutique_Paris_1' -> 'Paris', 'Boutique_Lyon' -> 'Lyon'
-const extractVille = (pointDeVente: string): string => {
- if (!pointDeVente) return '';
- const parts = String(pointDeVente).split('_');
- const ville = parts.find(
-  (p) => p && p.toLowerCase() !== 'boutique' && p.toLowerCase() !== 'magasin' && !/^\d+$/.test(p)
- );
- return ville ? ville.trim() : String(pointDeVente).trim();
-};
-
-// Formate une ligne brute du fichier : ne garde que les colonnes attendues
-// et ajoute la propriété Ville déduite de Point_de_Vente
-const formatRow = (row: any) => {
- const pointDeVente = String(row.Point_de_Vente ?? '');
- return {
-  Code_Article: String(row.Code_Article ?? ''),
-  Designation: String(row.Designation ?? ''),
-  Famille_Produit: String(row.Famille_Produit ?? ''),
-  Date_Transaction: String(row.Date_Transaction ?? ''),
-  Quantite_Vendue: Number(row.Quantite_Vendue) || 0,
-  Stock_Actuel: Number(row.Stock_Actuel) || 0,
-  CA_HT: Number(row.CA_HT) || 0,
-  Point_de_Vente: pointDeVente,
-  Ville: extractVille(pointDeVente)
- };
 };
 
 // GA4 : INITIALISATION
@@ -150,13 +127,23 @@ export default function App() {
  // -------------------------------------------------------
 
  // --- DONNÉES IMPORTÉES LOCALEMENT (state + localStorage) ---
- const [importedData, setImportedData] = useState<ReturnType<typeof formatRow>[]>(
-  () => readLocal<ReturnType<typeof formatRow>[]>(LOCAL_DATA_KEY, [])
+ const [importedData, setImportedData] = useState<ImportedRow[]>(
+  () => readLocal<ImportedRow[]>(LOCAL_DATA_KEY, [])
  );
- // Villes distinctes détectées dans les données importées
- const villesImportees = Array.from(
-  new Set(importedData.map((d) => d.Ville).filter(Boolean))
- );
+
+ // Prévision météo : géocodage + météo courante par ville, puis application
+ // des coefficients et agrégation bottom-up des réassorts par SKU.
+ const { villes: villesImportees, skus, skuMap } = useForecast(importedData);
+
+ // SKU sélectionné depuis le tableau de réassort du dashboard.
+ const [selectedSku, setSelectedSku] = useState<string | null>(null);
+ const activeSku = (selectedSku ? skuMap.get(selectedSku) : undefined) ?? skus[0];
+
+ // Filtre par ville dans la vue « Boutique Distribution ».
+ const [villeFilter, setVilleFilter] = useState<string | null>(null);
+
+ // Tableau de réassort du dashboard : 3 lignes par défaut, tout au clic.
+ const [showAllSkus, setShowAllSkus] = useState(false);
  // ----------------------------------------------------------
 
  const [showCalendar, setShowCalendar] = useState(false);
@@ -222,8 +209,13 @@ export default function App() {
   const reader = new FileReader();
   reader.onload = (evt) => {
    try {
-    const bstr = evt.target?.result;
-    const wb = XLSX.read(bstr, { type: 'binary' });
+    const buffer = new Uint8Array(evt.target?.result as ArrayBuffer);
+    const wb = XLSX.read(buffer, {
+     type: 'array',
+     codepage: 65001, // CSV en UTF-8 : évite « Prêt-à-porter » -> « PrÃªt-Ã -porter »
+     cellDates: true, // évite que Date_Transaction arrive en numéro de série Excel
+     dateNF: 'dd/mm/yyyy' // dates françaises : 12/03/2026 = 12 mars, pas 3 décembre
+    });
     const jsonData = XLSX.utils.sheet_to_json(wb.Sheets[wb.SheetNames[0]]);
 
     // Lecture des colonnes attendues + ajout de la propriété Ville
@@ -255,7 +247,7 @@ export default function App() {
     alert("Impossible de lire le fichier : " + (err?.message || "format non reconnu"));
    }
   };
-  reader.readAsBinaryString(file);
+  reader.readAsArrayBuffer(file);
  };
 
  const removeFile = () => {
@@ -615,6 +607,26 @@ export default function App() {
    { name: '13-01-2026', n: 700, n1: 580, forecast: 720 },
   ];
 
+  // Réassort recommandé par SKU (données réelles si un fichier a été importé,
+  // sinon le jeu de démonstration).
+  const REASSORT_ROWS = skus.length > 0
+   ? (showAllSkus ? skus : skus.slice(0, 3)).map(s => ({
+      key: s.sku,
+      sku: s.sku,
+      designation: s.designation,
+      uplift: s.upliftPct,
+      units: s.totalReassort,
+      img: `https://picsum.photos/seed/${encodeURIComponent(s.sku)}/100/100`
+     }))
+   : [0, 1, 2].map(i => ({
+      key: `demo-${i}`,
+      sku: '859163YCUA21000',
+      designation: '',
+      uplift: 45,
+      units: 120,
+      img: `https://picsum.photos/seed/prod${i}/100/100`
+     }));
+
   return (
    <div className="flex h-screen bg-[#f4f7fa] font-sans text-slate-900 overflow-hidden relative">
     <MobileMenuButton />
@@ -864,20 +876,28 @@ export default function App() {
             </tr>
            </thead>
            <tbody className="divide-y divide-slate-50">
-            {[1, 2, 3].map((_, i) => (
-             <tr key={i} className="group">
+            {REASSORT_ROWS.map((row) => (
+             <tr key={row.key} className="group">
               <td className="py-4">
-               <img src={`https://picsum.photos/seed/prod${i}/100/100`} className="w-12 h-12 rounded-lg object-cover bg-slate-50" referrerPolicy="no-referrer" />
+               <img src={row.img} className="w-12 h-12 rounded-lg object-cover bg-slate-50" referrerPolicy="no-referrer" />
               </td>
               <td className="py-4">
-               <span className="text-xs font-medium text-slate-600">859163YCUA21000</span>
+               <span className="text-xs font-medium text-slate-600">{row.sku}</span>
+               {row.designation && <p className="text-[10px] text-slate-400 truncate max-w-[180px]">{row.designation}</p>}
               </td>
               <td className="py-4 text-center">
-               <span className="text-sm font-bold text-green-500">+45%</span>
+               <span className={`text-sm font-bold ${row.uplift >= 0 ? 'text-green-500' : 'text-red-500'}`}>
+                {row.uplift >= 0 ? '+' : ''}{Math.round(row.uplift)}%
+               </span>
+               <p className="text-[10px] text-slate-400">{row.units} u. à réassortir</p>
               </td>
               <td className="py-4 text-right">
-               <button 
-                onClick={() => setState(prev => ({ ...prev, step: 'analysis-detail' }))}
+               <button
+                onClick={() => {
+                 setSelectedSku(row.sku);
+                 setVilleFilter(null);
+                 setState(prev => ({ ...prev, step: 'analysis-detail' }));
+                }}
                 className="px-6 py-2 bg-[#0958D9] text-white text-[10px] font-bold rounded-lg hover:bg-blue-700 transition-colors uppercase"
                >
                 Analyse
@@ -891,8 +911,13 @@ export default function App() {
         </div>
         
         <div className="mt-8 flex justify-center">
-         <button className="px-12 py-3 border border-slate-100 rounded-xl text-xs font-bold text-slate-500 hover:bg-slate-50 transition-colors">
-          Voir plus de produits
+         <button
+          onClick={() => setShowAllSkus(v => !v)}
+          className="px-12 py-3 border border-slate-100 rounded-xl text-xs font-bold text-slate-500 hover:bg-slate-50 transition-colors"
+         >
+          {skus.length > 3
+           ? (showAllSkus ? 'Réduire la liste' : `Voir les ${skus.length} produits`)
+           : 'Voir plus de produits'}
          </button>
         </div>
        </div>
@@ -1029,10 +1054,10 @@ export default function App() {
          referrerPolicy="no-referrer"
         />
         <div>
-         <h1 className="text-xl lg:text-[38px] font-semibold text-black leading-tight">Jimmy Veste en laine et toile de soie</h1>
+         <h1 className="text-xl lg:text-[38px] font-semibold text-black leading-tight">{activeSku ? activeSku.designation : 'Jimmy Veste en laine et toile de soie'}</h1>
          <div className="flex flex-col lg:flex-row lg:items-center gap-1 lg:gap-4 mt-1 lg:mt-2">
-          <span className="text-sm lg:text-xl text-black/45">SKU: 859163YCUA21000</span>
-          <span className="text-sm lg:text-xl text-black/45">Category: Summer 25 Veste</span>
+          <span className="text-sm lg:text-xl text-black/45">SKU: {activeSku ? activeSku.sku : '859163YCUA21000'}</span>
+          <span className="text-sm lg:text-xl text-black/45">Category: {activeSku ? activeSku.famille : 'Summer 25 Veste'}</span>
          </div>
         </div>
        </div>
@@ -1041,11 +1066,11 @@ export default function App() {
       <div className="flex items-center justify-between lg:justify-end">
        <div className="px-4 lg:px-6 border-r border-[#D9D9D9] text-right">
         <p className="text-xs lg:text-base text-black/65 mb-1 lg:mb-2">Stock Actuel</p>
-        <p className="text-lg lg:text-[28.85px] font-semibold text-[#101828]">45 <span className="text-xs lg:text-base font-normal text-black/45">unités</span></p>
+        <p className="text-lg lg:text-[28.85px] font-semibold text-[#101828]">{activeSku ? activeSku.stockActuel : 45} <span className="text-xs lg:text-base font-normal text-black/45">unités</span></p>
        </div>
        <div className="px-4 lg:px-6 text-right">
         <p className="text-xs lg:text-base text-black/65 mb-1 lg:mb-2">Ventes Moy. Hebdo</p>
-        <p className="text-lg lg:text-[28.85px] font-semibold text-[#101828]">32 <span className="text-xs lg:text-base font-normal text-black/45">unités/sem</span></p>
+        <p className="text-lg lg:text-[28.85px] font-semibold text-[#101828]">{activeSku ? activeSku.quantiteVendue : 32} <span className="text-xs lg:text-base font-normal text-black/45">unités/sem</span></p>
        </div>
       </div>
      </header>
@@ -1065,15 +1090,15 @@ export default function App() {
         </div>
         
         <div>
-         <div className="text-4xl lg:text-[48px] font-bold text-[#101828] leading-none">95</div>
+         <div className="text-4xl lg:text-[48px] font-bold text-[#101828] leading-none">{activeSku ? activeSku.totalReassortBase : 95}</div>
          <p className="text-sm lg:text-xl text-black/45 mt-2">Unités</p>
         </div>
 
         <div className="grid grid-cols-1 sm:grid-cols-3 gap-4 lg:gap-6">
          <div className="bg-white p-4 rounded shadow-sm">
           <p className="text-xs lg:text-base text-black/65 mb-1 lg:mb-2">Ventes prévues</p>
-          <p className="text-xl lg:text-[30px] font-semibold text-black">140</p>
-          <p className="text-sm lg:text-[19.23px] text-[#0958D9] font-normal">+14% vs moy</p>
+          <p className="text-xl lg:text-[30px] font-semibold text-black">{activeSku ? activeSku.quantiteVendue : 140}</p>
+          <p className="text-sm lg:text-[19.23px] text-[#0958D9] font-normal">sans météo</p>
          </div>
          <div className="bg-white p-4 rounded shadow-sm">
           <p className="text-xs lg:text-base text-black/65 mb-1 lg:mb-2">Couverture</p>
@@ -1101,15 +1126,22 @@ export default function App() {
         </div>
         
         <div>
-         <div className="text-4xl lg:text-[48px] font-bold text-[#101828] leading-none">120</div>
+         <div className="text-4xl lg:text-[48px] font-bold text-[#101828] leading-none">{activeSku ? activeSku.totalReassort : 120}</div>
          <p className="text-sm lg:text-xl text-black/45 mt-2">Unités recommandées</p>
+         {activeSku && (
+          <p className="text-xs lg:text-base text-black/45 mt-1">
+           Consolidé sur {activeSku.boutiques.length} boutique{activeSku.boutiques.length > 1 ? 's' : ''}
+          </p>
+         )}
         </div>
 
         <div className="grid grid-cols-1 sm:grid-cols-3 gap-4 lg:gap-6">
          <div className="bg-white p-2 rounded">
           <p className="text-xs lg:text-base text-black/65 mb-1 lg:mb-2">Ventes prévues</p>
-          <p className="text-xl lg:text-[30px] font-semibold text-black">165</p>
-          <p className="text-sm lg:text-[19.23px] text-[#0958D9] font-normal">+28% vs moy</p>
+          <p className="text-xl lg:text-[30px] font-semibold text-black">{activeSku ? activeSku.previsionIA : 165}</p>
+          <p className="text-sm lg:text-[19.23px] text-[#0958D9] font-normal">
+           {activeSku ? `${activeSku.upliftPct >= 0 ? '+' : ''}${Math.round(activeSku.upliftPct)}% vs initiale` : '+28% vs moy'}
+          </p>
          </div>
          <div className="bg-white p-2 rounded">
           <p className="text-xs lg:text-base text-black/65 mb-1 lg:mb-2">Couverture</p>
@@ -1117,9 +1149,9 @@ export default function App() {
           <p className="text-sm lg:text-[19.23px] text-black/45 font-normal">avec commande</p>
          </div>
          <div className="bg-white p-2 rounded">
-          <p className="text-xs lg:text-base text-black/65 mb-1 lg:mb-2">Risque</p>
-          <p className="text-xl lg:text-[30px] font-semibold text-black">92%</p>
-          <p className="text-sm lg:text-[19.23px] text-[#CF1322] font-normal">Sans commande</p>
+          <p className="text-xs lg:text-base text-black/65 mb-1 lg:mb-2">Villes</p>
+          <p className="text-xl lg:text-[30px] font-semibold text-black">{activeSku ? new Set(activeSku.boutiques.map(b => b.ville)).size : villesImportees.length || 4}</p>
+          <p className="text-sm lg:text-[19.23px] text-black/45 font-normal">météo intégrée</p>
          </div>
         </div>
        </div>
@@ -1180,14 +1212,14 @@ export default function App() {
         <div className="bg-white p-4 lg:p-6 rounded-lg border border-[#E5E7EB] flex flex-col gap-6">
          <h3 className="text-xl lg:text-2xl font-semibold text-black/88">Votre Décision Finale</h3>
          <div className="flex items-baseline gap-4">
-          <span className="text-4xl lg:text-[48px] font-bold text-[#0958D9] leading-none">120</span>
+          <span className="text-4xl lg:text-[48px] font-bold text-[#0958D9] leading-none">{activeSku ? activeSku.totalReassort : 120}</span>
           <span className="text-sm lg:text-xl text-black/45">unités</span>
          </div>
 
          <div className="space-y-3">
           <label className="block text-sm lg:text-xl text-[#364153]">Modifier les quantités Manuellement</label>
           <div className="px-4 lg:px-6 py-3 lg:py-4 border border-[#D1D5DC] rounded bg-white text-xl lg:text-[24px] font-semibold text-[#0A0A0A]">
-           120
+           {activeSku ? activeSku.totalReassort : 120}
           </div>
           <p className="text-sm lg:text-[19.23px] text-[#6A7282]">Modify the AI recommendation if needed</p>
          </div>
@@ -1208,14 +1240,37 @@ export default function App() {
  }
 
  if (state.step === 'boutique-distribution') {
-  const BOUTIQUES = [
-   { name: 'Paris Champs-Élysées', type: 'Flagship store', units: 50, tag: 'Fashion Week proximity, highest foot traffic.', avgSales: 120, footTraffic: '2,800', performance: 95, allocation: 41.7, img: 'https://picsum.photos/seed/paris1/400/300' },
-   { name: 'Lyon Part-Dieu', type: 'Boutique', units: 25, tag: 'Strong summer category performance, regional hub', avgSales: 120, footTraffic: '2,800', performance: 78, allocation: 20.8, img: 'https://picsum.photos/seed/lyon1/400/300' },
-   { name: 'Paris Champs-Élysées', type: 'Flagship store', units: 20, tag: 'Fashion Week proximity, highest foot traffic.', avgSales: 120, footTraffic: '2,800', performance: 72, allocation: 41.7, img: 'https://picsum.photos/seed/paris2/400/300' },
-   { name: 'Nice Promenade', type: 'Flagship store', units: 15, tag: 'Fashion Week proximity, highest foot traffic.', avgSales: 120, footTraffic: '2,800', performance: 65, allocation: 41.7, img: 'https://picsum.photos/seed/nice1/400/300' },
-   { name: 'Bordeaux Centre', type: 'Flagship store', units: 10, tag: 'Fourist hotspot, but smaller store size', avgSales: 120, footTraffic: '2,800', performance: 52, allocation: 41.7, img: 'https://picsum.photos/seed/bordeaux1/400/300' },
-   { name: 'Paris Champs-Élysées', type: 'Departement de Boutique', units: 50, tag: 'Fashion Week proximity, highest foot traffic.', avgSales: 120, footTraffic: '2,800', performance: 95, allocation: 41.7, img: 'https://picsum.photos/seed/paris3/400/300' },
-  ];
+  // Répartition réelle issue du CSV + météo, sinon jeu de démonstration.
+  const ALL_BOUTIQUES = activeSku
+   ? activeSku.boutiques.map(b => ({
+      name: b.pointDeVente,
+      type: b.ville,
+      ville: b.ville,
+      units: b.reassort,
+      tag: b.coefficient !== 1
+       ? `${weatherLabel(b.weathercode)} à ${b.ville} · prévision ajustée ×${b.coefficient}`
+       : `${weatherLabel(b.weathercode)} à ${b.ville} · aucun ajustement météo`,
+      avgSales: b.quantiteVendue,
+      stock: b.stockActuel,
+      prevision: b.previsionIA,
+      allocation: b.allocationPct,
+      img: `https://picsum.photos/seed/${encodeURIComponent(b.pointDeVente)}/400/300`
+     }))
+   : [
+      { name: 'Paris Champs-Élysées', type: 'Flagship store', ville: 'Paris', units: 50, tag: 'Fashion Week proximity, highest foot traffic.', avgSales: 120, stock: 30, prevision: 80, allocation: 41.7, img: 'https://picsum.photos/seed/paris1/400/300' },
+      { name: 'Lyon Part-Dieu', type: 'Boutique', ville: 'Lyon', units: 25, tag: 'Strong summer category performance, regional hub', avgSales: 120, stock: 45, prevision: 70, allocation: 20.8, img: 'https://picsum.photos/seed/lyon1/400/300' },
+      { name: 'Lille Grand Place', type: 'Boutique', ville: 'Lille', units: 20, tag: 'Forte affluence en semaine', avgSales: 120, stock: 40, prevision: 60, allocation: 16.7, img: 'https://picsum.photos/seed/lille1/400/300' },
+      { name: 'Nice Promenade', type: 'Flagship store', ville: 'Nice', units: 15, tag: 'Fashion Week proximity, highest foot traffic.', avgSales: 120, stock: 50, prevision: 65, allocation: 12.5, img: 'https://picsum.photos/seed/nice1/400/300' },
+      { name: 'Bordeaux Centre', type: 'Flagship store', ville: 'Bordeaux', units: 10, tag: 'Tourist hotspot, but smaller store size', avgSales: 120, stock: 55, prevision: 65, allocation: 8.3, img: 'https://picsum.photos/seed/bordeaux1/400/300' },
+     ];
+
+  // Onglets de villes : dérivés des données réelles quand elles existent.
+  const VILLE_TABS = Array.from(new Set(ALL_BOUTIQUES.map(b => b.ville).filter(Boolean)));
+  const BOUTIQUES = villeFilter
+   ? ALL_BOUTIQUES.filter(b => b.ville === villeFilter)
+   : ALL_BOUTIQUES;
+
+  const totalAllocation = activeSku ? activeSku.totalReassort : 120;
 
   return (
    <div className="flex h-screen bg-white font-sans text-slate-900 overflow-hidden relative">
@@ -1245,7 +1300,9 @@ export default function App() {
          />
          <div>
           <h1 className="text-sm lg:text-[38px] font-semibold leading-tight">Boutique Distribution</h1>
-          <p className="text-[10px] lg:text-xl text-black/45 truncate max-w-[120px] sm:max-w-[200px] lg:max-w-none">SKU: 859163YCUA... Jimmy Veste</p>
+          <p className="text-[10px] lg:text-xl text-black/45 truncate max-w-[120px] sm:max-w-[200px] lg:max-w-none">
+           SKU: {activeSku ? `${activeSku.sku} · ${activeSku.designation}` : '859163YCUA... Jimmy Veste'}
+          </p>
          </div>
         </div>
        </div>
@@ -1253,7 +1310,7 @@ export default function App() {
        <div className="lg:hidden text-right shrink-0">
         <p className="text-[10px] text-[#4A5565] leading-none mb-0.5">Total</p>
         <p className="text-sm font-semibold leading-none">
-         <span className="text-[#0958D9]">120</span> <span className="text-black/45 text-[10px] font-normal">u.</span>
+         <span className="text-[#0958D9]">{totalAllocation}</span> <span className="text-black/45 text-[10px] font-normal">u.</span>
         </p>
        </div>
       </div>
@@ -1261,7 +1318,7 @@ export default function App() {
       <div className="hidden lg:block text-right">
        <p className="text-base text-[#4A5565] mb-2">Allocation Total</p>
        <p className="text-[28px] font-semibold">
-        <span className="text-[#0958D9]">120</span> <span className="text-black/45 text-base font-normal">unités</span>
+        <span className="text-[#0958D9]">{totalAllocation}</span> <span className="text-black/45 text-base font-normal">unités</span>
        </p>
       </div>
      </header>
@@ -1289,11 +1346,19 @@ export default function App() {
 
         <div className="flex items-center justify-between border-b border-[#F0F0F0]">
          <div className="flex items-center gap-4 lg:gap-8 overflow-x-auto no-scrollbar">
-          {['Tout les boutiques', 'Paris', 'Lille', 'Nice', 'Lyon'].map((tab, i) => (
-           <button key={tab} className={`pb-4 text-sm font-semibold relative whitespace-nowrap ${i === 0 ? 'text-[#0958D9]' : 'text-[#828282]'}`}>
-            {tab} {i === 0 && <div className="absolute bottom-0 left-0 right-0 h-0.5 bg-[#0958D9] rounded" />}
-           </button>
-          ))}
+          {[null, ...VILLE_TABS].map((tab) => {
+           const isActive = villeFilter === tab;
+           return (
+            <button
+             key={tab ?? 'all'}
+             onClick={() => setVilleFilter(tab)}
+             className={`pb-4 text-sm font-semibold relative whitespace-nowrap ${isActive ? 'text-[#0958D9]' : 'text-[#828282]'}`}
+            >
+             {tab ?? 'Tout les boutiques'}
+             {isActive && <div className="absolute bottom-0 left-0 right-0 h-0.5 bg-[#0958D9] rounded" />}
+            </button>
+           );
+          })}
           <button className="pb-4 text-sm text-[#828282] whitespace-nowrap flex items-center gap-1">
            <Plus size={14} /> <span>Ajouter plus Tag</span>
           </button>
@@ -1327,17 +1392,20 @@ export default function App() {
            </div>
           </div>
           <div className="grid grid-cols-3 gap-2 pt-2">
-           <div> <p className="text-[10px] lg:text-xs text-black/45 mb-1">Avg Weekly Sales</p> <p className="text-sm lg:text-base font-bold">{boutique.avgSales}</p> <p className="text-[10px] text-black/45">unités</p> </div>
-           <div> <p className="text-[10px] lg:text-xs text-black/45 mb-1">Daily Foot Traffic</p> <p className="text-sm lg:text-base font-bold">{boutique.footTraffic}</p> <p className="text-[10px] text-black/45">perso</p> </div>
-           <div> <p className="text-[10px] lg:text-xs text-black/45 mb-1">Performance</p> <p className="text-sm lg:text-base font-bold">{boutique.performance}</p> <p className="text-[10px] text-black/45">sur 100</p> </div>
+           <div> <p className="text-[10px] lg:text-xs text-black/45 mb-1">Quantité vendue</p> <p className="text-sm lg:text-base font-bold">{boutique.avgSales}</p> <p className="text-[10px] text-black/45">unités</p> </div>
+           <div> <p className="text-[10px] lg:text-xs text-black/45 mb-1">Stock actuel</p> <p className="text-sm lg:text-base font-bold">{boutique.stock}</p> <p className="text-[10px] text-black/45">unités</p> </div>
+           <div> <p className="text-[10px] lg:text-xs text-black/45 mb-1">Prévision IA</p> <p className="text-sm lg:text-base font-bold">{boutique.prevision}</p> <p className="text-[10px] text-black/45">unités</p> </div>
           </div>
           <div className="pt-2">
            <div className="flex justify-between items-center mb-1">
             <span className="text-[10px] lg:text-xs text-black/45">Allocation %</span>
-            <span className="text-[10px] lg:text-xs font-bold">{boutique.allocation}%</span>
+            <span className="text-[10px] lg:text-xs font-bold">{boutique.allocation.toFixed(1)}%</span>
            </div>
            <div className="w-full h-2 bg-[#F5F5F5] rounded-full overflow-hidden">
-            <div className="h-full bg-[#0958D9]" style={{ width: `${boutique.allocation}%` }} />
+            <div
+             className="h-full bg-[#0958D9] transition-all duration-500"
+             style={{ width: `${Math.min(100, boutique.allocation)}%` }}
+            />
            </div>
           </div>
          </div>
