@@ -480,7 +480,10 @@ export const aggregateBySku = (rows: ForecastRow[]): SkuAggregate[] => {
    designation: first.Designation || sku,
    famille: first.Famille_Produit,
    quantiteVendue: sum(skuRows, (r) => r.Quantite_Vendue),
-   stockActuel: sum(skuRows, (r) => r.Stock_Actuel),
+   // Le stock est un état, pas un flux : on somme une valeur par boutique et
+   // non toutes les lignes, sinon une boutique présente sur 20 dates verrait
+   // son stock compté 20 fois.
+   stockActuel: boutiques.reduce((total, b) => total + b.stockActuel, 0),
    previsionIA: sum(skuRows, (r) => r.Prevision_IA),
    totalReassort,
    totalReassortBase,
@@ -914,4 +917,146 @@ export const getBestsellers = (rows: ForecastRow[], limite = 3): BestsellerItem[
   }))
   .sort((a, b) => b.caHt - a.caHt || b.quantite - a.quantite)
   .slice(0, limite);
+};
+
+// ---------------------------------------------------------------------------
+// 8. Fiche SKU : couverture, risque et historique
+// ---------------------------------------------------------------------------
+
+/** Nombre de jours couverts par les données (au moins un). */
+export const joursCouverts = (rows: ImportedRow[]): number => {
+ const range = datasetRange(rows);
+ if (!range) return 1;
+ return Math.max(1, Math.round((range.fin.getTime() - range.debut.getTime()) / JOUR_MS) + 1);
+};
+
+export interface IndicateursSku {
+ /** Jours de vente que couvrent le stock et le réassort recommandé. */
+ couvertureJours: number;
+ /** Part de la demande prévue que le stock seul ne couvre pas, en %. */
+ risquePct: number;
+}
+
+/**
+ * Couverture et risque de rupture d'un SKU.
+ *
+ * - couverture = (stock + réassort commandé) / demande journalière prévue,
+ *   d'où le libellé « avec commande » : c'est l'autonomie après réassort.
+ * - risque = fraction de la demande prévue non couverte par le stock seul,
+ *   d'où le libellé « sans commande ». Borné à [0, 100].
+ */
+export const computeIndicateurs = (
+ stock: number,
+ demandePrevue: number,
+ reassort: number,
+ jours: number
+): IndicateursSku => {
+ const demandeJournaliere = jours > 0 ? demandePrevue / jours : 0;
+ return {
+  couvertureJours: demandeJournaliere > 0 ? (stock + reassort) / demandeJournaliere : 0,
+  risquePct:
+   demandePrevue > 0
+    ? Math.max(0, Math.min(100, ((demandePrevue - stock) / demandePrevue) * 100))
+    : 0
+ };
+};
+
+export interface HistoriqueRow {
+ cle: string;
+ /** Mois analysé, ex. « mars 2026 ». */
+ periode: string;
+ weathercode: number | null;
+ coefficient: number;
+ ventesRealisees: number;
+ /** Référence naïve : les ventes du mois précédent. */
+ previsionInitiale: number;
+ /** Même référence, repondérée par le coefficient météo. */
+ previsionIA: number;
+ ecartIA: number;
+ ecartInitiale: number;
+ /** Vrai si l'IA s'est approchée davantage des ventes réelles. */
+ iaMeilleure: boolean;
+}
+
+/**
+ * Rejoue le modèle sur l'historique du fichier, mois par mois.
+ *
+ * La prévision de référence d'un mois est le volume vendu le mois précédent ;
+ * la prévision IA applique en plus le coefficient météo. Les deux sont
+ * confrontées aux ventes réellement constatées, ce qui donne un écart de
+ * précision mesuré et non déclaratif.
+ *
+ * Limite assumée : le fichier ne contient pas la météo passée, c'est donc le
+ * coefficient courant de la famille qui est appliqué. Le premier mois du
+ * fichier est écarté puisqu'il n'a pas de mois de référence.
+ */
+export const buildHistorique = (
+ rows: ForecastRow[],
+ sku: string,
+ limite = 3
+): HistoriqueRow[] => {
+ const lignes = rows.filter((r) => r.Code_Article === sku);
+
+ const parMois = new Map<
+  string,
+  { date: Date; ventes: number; poidsCoef: number; poids: number; weathercode: number | null }
+ >();
+ for (const r of lignes) {
+  const d = parseISODate(r.Date_Transaction);
+  if (!d) continue;
+  const cle = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}`;
+  const acc =
+   parMois.get(cle) ??
+   { date: new Date(d.getFullYear(), d.getMonth(), 1), ventes: 0, poidsCoef: 0, poids: 0, weathercode: r.Weathercode };
+  acc.ventes += r.Quantite_Vendue;
+  // Coefficient moyen pondéré par les volumes du mois.
+  acc.poidsCoef += r.Coefficient * r.Quantite_Vendue;
+  acc.poids += r.Quantite_Vendue;
+  if (acc.weathercode === null) acc.weathercode = r.Weathercode;
+  parMois.set(cle, acc);
+ }
+
+ const mois = Array.from(parMois.entries()).sort(
+  (a, b) => a[1].date.getTime() - b[1].date.getTime()
+ );
+
+ const historique: HistoriqueRow[] = [];
+ for (let i = 1; i < mois.length; i++) {
+  const [cle, courant] = mois[i];
+  const precedent = mois[i - 1][1];
+  const coefficient = courant.poids > 0 ? courant.poidsCoef / courant.poids : 1;
+  const previsionInitiale = precedent.ventes;
+  const previsionIA = Math.round(previsionInitiale * coefficient);
+  const ecartIA = previsionIA - courant.ventes;
+  const ecartInitiale = previsionInitiale - courant.ventes;
+  historique.push({
+   cle,
+   periode: courant.date.toLocaleDateString('fr-FR', { month: 'long', year: 'numeric' }),
+   weathercode: courant.weathercode,
+   coefficient,
+   ventesRealisees: courant.ventes,
+   previsionInitiale,
+   previsionIA,
+   ecartIA,
+   ecartInitiale,
+   iaMeilleure: Math.abs(ecartIA) < Math.abs(ecartInitiale)
+  });
+ }
+
+ // Du plus récent au plus ancien.
+ return historique.reverse().slice(0, limite);
+};
+
+/** Synthèse de performance affichée sous le tableau historique. */
+export const resumeHistorique = (
+ historique: HistoriqueRow[]
+): { total: number; victoiresIA: number; erreurMoyenneIA: number; erreurMoyenneInitiale: number } => {
+ const total = historique.length;
+ if (total === 0) return { total: 0, victoiresIA: 0, erreurMoyenneIA: 0, erreurMoyenneInitiale: 0 };
+ return {
+  total,
+  victoiresIA: historique.filter((h) => h.iaMeilleure).length,
+  erreurMoyenneIA: historique.reduce((s, h) => s + Math.abs(h.ecartIA), 0) / total,
+  erreurMoyenneInitiale: historique.reduce((s, h) => s + Math.abs(h.ecartInitiale), 0) / total
+ };
 };

@@ -39,8 +39,9 @@ import {
  Home, 
  FileSpreadsheet, 
  Check, 
- Mail, 
- Send
+ Mail,
+ Send,
+ Info
 } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
 import { 
@@ -64,7 +65,11 @@ import * as XLSX from 'xlsx';
 import {
  addDays,
  buildChartSeries,
+ buildHistorique,
+ computeIndicateurs,
  debutDeJour,
+ joursCouverts,
+ resumeHistorique,
  computeDashboardKpis,
  filterRowsByRange,
  formatPeriode,
@@ -92,6 +97,23 @@ const readLocal = <T,>(key: string, fallback: T): T => {
   return fallback;
  }
 };
+
+/**
+ * Icône d'aide affichant une explication au survol.
+ * Rendue en CSS pur (group-hover) : pas d'état, donc utilisable dans un
+ * tableau sans multiplier les re-rendus.
+ */
+const InfoTooltip = ({ texte, className = '' }: { texte: string; className?: string }) => (
+ <span className={`relative inline-flex group align-middle ${className}`}>
+  <Info size={14} className="text-black/35 hover:text-[#0958D9] cursor-help transition-colors" />
+  <span
+   role="tooltip"
+   className="pointer-events-none absolute bottom-full left-1/2 -translate-x-1/2 mb-2 w-64 p-3 bg-slate-900 text-white text-xs font-normal normal-case leading-relaxed rounded-lg opacity-0 group-hover:opacity-100 transition-opacity z-[60] shadow-xl text-left"
+  >
+   {texte}
+  </span>
+ </span>
+);
 
 // GA4 : INITIALISATION
 ReactGA.initialize("G-86B5216X0W");
@@ -158,6 +180,14 @@ export default function App() {
 
  // Tableau de réassort du dashboard : 3 lignes par défaut, tout au clic.
  const [showAllSkus, setShowAllSkus] = useState(false);
+
+ // Décision finale : `null` tant que l'utilisateur n'a rien saisi, on affiche
+ // alors la recommandation de l'IA. Chaîne pour autoriser un champ vide.
+ const [decisionFinale, setDecisionFinale] = useState<string | null>(null);
+
+ // Répartition saisie à la main, par point de vente.
+ const [distributionManuelle, setDistributionManuelle] = useState(false);
+ const [allocationsManuelles, setAllocationsManuelles] = useState<Record<string, string>>({});
 
  // Recherche SKU de l'en-tête.
  const [searchQuery, setSearchQuery] = useState('');
@@ -1446,6 +1476,31 @@ export default function App() {
  }
 
  if (state.step === 'analysis-detail') {
+  // Fenêtre réellement couverte par le fichier pour ce SKU : sert de base au
+  // calcul de la demande journalière.
+  const lignesSku = activeSku
+   ? forecastRows.filter(r => r.Code_Article === activeSku.sku)
+   : [];
+  const jours = joursCouverts(lignesSku);
+
+  // Couverture et risque, sans puis avec ajustement météo.
+  const indicInitial = activeSku
+   ? computeIndicateurs(activeSku.stockActuel, activeSku.quantiteVendue, activeSku.totalReassortBase, jours)
+   : null;
+  const indicIA = activeSku
+   ? computeIndicateurs(activeSku.stockActuel, activeSku.previsionIA, activeSku.totalReassort, jours)
+   : null;
+
+  const HISTORIQUE = activeSku ? buildHistorique(forecastRows, activeSku.sku) : [];
+  const bilan = resumeHistorique(HISTORIQUE);
+
+  // Recommandation de l'IA et valeur effectivement retenue par l'utilisateur.
+  const recommandation = activeSku ? activeSku.totalReassort : 120;
+  const quantiteRetenue = decisionFinale === null ? recommandation : Number(decisionFinale) || 0;
+  const decisionModifiee = decisionFinale !== null && quantiteRetenue !== recommandation;
+
+  const formatJours = (j: number) => (j > 0 && j < 10 ? j.toFixed(1) : Math.round(j).toString());
+
   return (
    <div className="flex h-screen bg-[#F8FBFF]/50 font-sans text-slate-900 overflow-hidden relative">
     <MobileMenuButton />
@@ -1520,13 +1575,23 @@ export default function App() {
           <p className="text-sm lg:text-[19.23px] text-[#0958D9] font-normal">sans météo</p>
          </div>
          <div className="bg-white p-4 rounded shadow-sm">
-          <p className="text-xs lg:text-base text-black/65 mb-1 lg:mb-2">Couverture</p>
-          <p className="text-xl lg:text-[30px] font-semibold text-black">5J</p>
+          <p className="text-xs lg:text-base text-black/65 mb-1 lg:mb-2 flex items-center gap-1.5">
+           Couverture
+           <InfoTooltip texte={`Autonomie en jours une fois le réassort reçu : (stock ${activeSku ? activeSku.stockActuel : 0} + commande) divisé par la demande journalière moyenne, mesurée sur les ${jours} jours couverts par votre fichier.`} />
+          </p>
+          <p className="text-xl lg:text-[30px] font-semibold text-black">
+           {indicInitial ? `${formatJours(indicInitial.couvertureJours)}J` : '5J'}
+          </p>
           <p className="text-sm lg:text-[19.23px] text-black/45 font-normal">avec commande</p>
          </div>
          <div className="bg-white p-4 rounded shadow-sm">
-          <p className="text-xs lg:text-base text-black/65 mb-1 lg:mb-2">Risque</p>
-          <p className="text-xl lg:text-[30px] font-semibold text-black">65%</p>
+          <p className="text-xs lg:text-base text-black/65 mb-1 lg:mb-2 flex items-center gap-1.5">
+           Risque
+           <InfoTooltip texte="Part de la demande prévue que le stock actuel ne couvre pas, si aucune commande n'est passée. 0 % signifie que le stock suffit." />
+          </p>
+          <p className="text-xl lg:text-[30px] font-semibold text-black">
+           {indicInitial ? `${Math.round(indicInitial.risquePct)}%` : '65%'}
+          </p>
           <p className="text-sm lg:text-[19.23px] text-[#CF1322] font-normal">Sans commande</p>
          </div>
         </div>
@@ -1561,19 +1626,36 @@ export default function App() {
          <div className="bg-white p-2 rounded">
           <p className="text-xs lg:text-base text-black/65 mb-1 lg:mb-2">Ventes prévues</p>
           <p className="text-xl lg:text-[30px] font-semibold text-black">{activeSku ? activeSku.previsionIA : 165}</p>
-          <p className="text-sm lg:text-[19.23px] text-[#0958D9] font-normal">
+          <p className="text-sm lg:text-[19.23px] text-[#0958D9] font-normal flex items-center gap-1.5">
            {activeSku ? `${activeSku.upliftPct >= 0 ? '+' : ''}${Math.round(activeSku.upliftPct)}% vs initiale` : '+28% vs moy'}
+           <InfoTooltip
+            texte={
+             activeSku
+              ? `Écart entre la prévision IA (${activeSku.previsionIA} u.) et la prévision initiale (${activeSku.quantiteVendue} u.), qui reprend l'historique de ventes sans correction. L'IA croise cet historique avec la météo courante relevée par Open-Meteo dans chaque ville : selon la famille de produit et le temps du jour, un coefficient de 1.3 (pluie), 1.5 (beau temps) ou 1.0 est appliqué.`
+              : "Écart entre la prévision IA et la prévision initiale. L'IA croise l'historique de ventes avec la météo courante relevée par Open-Meteo dans chaque ville."
+            }
+           />
           </p>
          </div>
          <div className="bg-white p-2 rounded">
-          <p className="text-xs lg:text-base text-black/65 mb-1 lg:mb-2">Couverture</p>
-          <p className="text-xl lg:text-[30px] font-semibold text-black">7J</p>
+          <p className="text-xs lg:text-base text-black/65 mb-1 lg:mb-2 flex items-center gap-1.5">
+           Couverture
+           <InfoTooltip texte="Autonomie en jours après réception du réassort recommandé, face à la demande ajustée par la météo. Elle est plus courte que la couverture initiale quand l'IA anticipe une hausse des ventes." />
+          </p>
+          <p className="text-xl lg:text-[30px] font-semibold text-black">
+           {indicIA ? `${formatJours(indicIA.couvertureJours)}J` : '7J'}
+          </p>
           <p className="text-sm lg:text-[19.23px] text-black/45 font-normal">avec commande</p>
          </div>
          <div className="bg-white p-2 rounded">
-          <p className="text-xs lg:text-base text-black/65 mb-1 lg:mb-2">Villes</p>
-          <p className="text-xl lg:text-[30px] font-semibold text-black">{activeSku ? new Set(activeSku.boutiques.map(b => b.ville)).size : villesImportees.length || 4}</p>
-          <p className="text-sm lg:text-[19.23px] text-black/45 font-normal">météo intégrée</p>
+          <p className="text-xs lg:text-base text-black/65 mb-1 lg:mb-2 flex items-center gap-1.5">
+           Risque
+           <InfoTooltip texte="Part de la demande ajustée par la météo que le stock actuel ne couvre pas. Plus élevé que le risque initial lorsque la météo pousse les ventes à la hausse." />
+          </p>
+          <p className="text-xl lg:text-[30px] font-semibold text-black">
+           {indicIA ? `${Math.round(indicIA.risquePct)}%` : '92%'}
+          </p>
+          <p className="text-sm lg:text-[19.23px] text-[#CF1322] font-normal">Sans commande</p>
          </div>
         </div>
        </div>
@@ -1591,35 +1673,66 @@ export default function App() {
              <th className="py-4 text-sm lg:text-xl font-semibold text-black/65 uppercase">PREVISIONS IA</th>
              <th className="py-4 text-sm lg:text-xl font-semibold text-black/65 uppercase">PREVISIONS INITIALES</th>
              <th className="py-4 text-sm lg:text-xl font-semibold text-black/65 uppercase">VENTES REALISÉES</th>
-             <th className="py-4 text-sm lg:text-xl font-semibold text-black/65 uppercase">ÉCART DE PRÉCISION</th>
+             <th className="py-4 text-sm lg:text-xl font-semibold text-black/65 uppercase">
+              <span className="flex items-center gap-1.5">
+               ÉCART DE PRÉCISION
+               <InfoTooltip texte="Différence entre la prévision et les ventes réellement constatées ce mois-là. Le libellé indique quel modèle est tombé le plus juste, et le nombre entre parenthèses de combien d'unités il s'est écarté : négatif = sous-estimation, positif = surestimation." />
+              </span>
+             </th>
             </tr>
            </thead>
            <tbody className="divide-y divide-slate-50">
-            {[1, 2, 3].map((_, i) => (
-             <tr key={i}>
-              <td className="py-6 text-base lg:text-[22.44px] text-[#101828]">Juil 2025</td>
-              <td className="py-6">
-               <div className="flex items-center gap-2 text-black">
-                <Cloud size={20} className="text-black/45" />
-                <span className="text-base lg:text-[22.44px]">Meteo</span>
-               </div>
-              </td>
-              <td className="py-6 text-base lg:text-[22.44px] font-semibold text-black/88">165 unités</td>
-              <td className="py-6 text-base lg:text-[22.44px] font-semibold text-black/88">140 unités</td>
-              <td className="py-6 text-base lg:text-[22.44px] font-semibold text-black/88">162 unités</td>
-              <td className="py-6">
-               <span className="text-base lg:text-[22.44px] font-semibold text-[#0958D9]">IA (-3)</span>
+            {HISTORIQUE.length === 0 ? (
+             <tr>
+              <td colSpan={6} className="py-6 text-base text-black/45">
+               {forecastRows.length === 0
+                ? 'Importez un fichier pour rejouer le modèle sur votre historique.'
+                : "Ce SKU ne couvre qu'un seul mois : il faut au moins deux mois pour comparer une prévision aux ventes constatées."}
               </td>
              </tr>
-            ))}
+            ) : (
+             HISTORIQUE.map((h) => (
+              <tr key={h.cle}>
+               <td className="py-6 text-base lg:text-[22.44px] text-[#101828] capitalize">{h.periode}</td>
+               <td className="py-6">
+                <div className="flex items-center gap-2 text-black">
+                 <Cloud size={20} className="text-black/45" />
+                 <span className="text-base lg:text-[22.44px]">
+                  {weatherLabel(h.weathercode)}
+                  {h.coefficient !== 1 && (
+                   <span className="text-[#0958D9] font-semibold"> ×{h.coefficient.toFixed(2)}</span>
+                  )}
+                 </span>
+                </div>
+               </td>
+               <td className="py-6 text-base lg:text-[22.44px] font-semibold text-black/88">{h.previsionIA} unités</td>
+               <td className="py-6 text-base lg:text-[22.44px] font-semibold text-black/88">{h.previsionInitiale} unités</td>
+               <td className="py-6 text-base lg:text-[22.44px] font-semibold text-black/88">{h.ventesRealisees} unités</td>
+               <td className="py-6">
+                <span className={`text-base lg:text-[22.44px] font-semibold ${h.iaMeilleure ? 'text-[#0958D9]' : 'text-[#D48806]'}`}>
+                 {h.iaMeilleure ? 'IA' : 'Initiale'} ({h.iaMeilleure ? (h.ecartIA > 0 ? '+' : '') + h.ecartIA : (h.ecartInitiale > 0 ? '+' : '') + h.ecartInitiale})
+                </span>
+               </td>
+              </tr>
+             ))
+            )}
            </tbody>
           </table>
          </div>
         </div>
 
         <div className="p-4 lg:p-6 bg-[#F8FBFF] rounded-lg border border-[#91CAFF]">
-         <p className="text-base lg:text-[22.44px] text-[#1C398E] leading-relaxed">
-          l'IA a été plus précise dans <span className="font-bold">3/3 cas similaires</span>, avec une marge d'erreur moyenne de <span className="font-bold">5 unités</span> vs 20 unités pour les prévisions manuelles.
+         {bilan.total === 0 ? (
+          <p className="text-base lg:text-[22.44px] text-[#1C398E] leading-relaxed">
+           Le bilan de précision apparaîtra dès que votre fichier couvrira au moins deux mois de ventes pour ce produit.
+          </p>
+         ) : (
+          <p className="text-base lg:text-[22.44px] text-[#1C398E] leading-relaxed">
+           l'IA a été plus précise dans <span className="font-bold">{bilan.victoiresIA}/{bilan.total} cas</span>, avec une marge d'erreur moyenne de <span className="font-bold">{Math.round(bilan.erreurMoyenneIA)} unités</span> vs {Math.round(bilan.erreurMoyenneInitiale)} unités pour la prévision initiale.
+          </p>
+         )}
+         <p className="text-xs lg:text-base text-[#1C398E]/70 mt-3 leading-relaxed">
+          Méthode : la prévision initiale d'un mois reprend le volume vendu le mois précédent ; la prévision IA y applique le coefficient météo. Le fichier ne contenant pas la météo passée, c'est le coefficient courant de la famille qui est utilisé.
          </p>
         </div>
 
@@ -1634,20 +1747,55 @@ export default function App() {
         <div className="bg-white p-4 lg:p-6 rounded-lg border border-[#E5E7EB] flex flex-col gap-6">
          <h3 className="text-xl lg:text-2xl font-semibold text-black/88">Votre Décision Finale</h3>
          <div className="flex items-baseline gap-4">
-          <span className="text-4xl lg:text-[48px] font-bold text-[#0958D9] leading-none">{activeSku ? activeSku.totalReassort : 120}</span>
+          <span className="text-4xl lg:text-[48px] font-bold text-[#0958D9] leading-none">{quantiteRetenue}</span>
           <span className="text-sm lg:text-xl text-black/45">unités</span>
          </div>
 
          <div className="space-y-3">
-          <label className="block text-sm lg:text-xl text-[#364153]">Modifier les quantités Manuellement</label>
-          <div className="px-4 lg:px-6 py-3 lg:py-4 border border-[#D1D5DC] rounded bg-white text-xl lg:text-[24px] font-semibold text-[#0A0A0A]">
-           {activeSku ? activeSku.totalReassort : 120}
-          </div>
-          <p className="text-sm lg:text-[19.23px] text-[#6A7282]">Modify the AI recommendation if needed</p>
+          <label htmlFor="decision-finale" className="block text-sm lg:text-xl text-[#364153]">
+           Modifier les quantités Manuellement
+          </label>
+          <input
+           id="decision-finale"
+           type="number"
+           min="0"
+           inputMode="numeric"
+           value={decisionFinale ?? String(recommandation)}
+           onChange={(e) => setDecisionFinale(e.target.value)}
+           className="w-full px-4 lg:px-6 py-3 lg:py-4 border border-[#D1D5DC] rounded bg-white text-xl lg:text-[24px] font-semibold text-[#0A0A0A] focus:outline-none focus:ring-2 focus:ring-[#0958D9]/30 focus:border-[#0958D9] transition-all"
+          />
+          <p className="text-sm lg:text-[19.23px] text-[#6A7282]">
+           Modifiez la recommandation de l'IA si nécessaire.
+          </p>
+
+          {decisionModifiee && (
+           <div className="flex items-start gap-2 p-3 bg-[#FFFBE6] border border-[#FFE58F] rounded">
+            <AlertCircle size={16} className="text-[#D48806] shrink-0 mt-0.5" />
+            <p className="text-xs lg:text-sm text-[#874D00] leading-relaxed">
+             Vous vous écartez de la recommandation ({recommandation} u.). La répartition
+             entre boutiques passera en <span className="font-bold">mode manuel</span> :
+             c'est vous qui attribuerez les quantités.
+            </p>
+           </div>
+          )}
+          {decisionFinale !== null && !decisionModifiee && (
+           <button
+            onClick={() => setDecisionFinale(null)}
+            className="text-xs text-[#0958D9] font-semibold hover:underline"
+           >
+            Revenir à la recommandation de l'IA
+           </button>
+          )}
          </div>
 
-         <button 
-          onClick={() => setState(prev => ({ ...prev, step: 'boutique-distribution' }))}
+         <button
+          onClick={() => {
+           // Une quantité saisie différente de la recommandation bascule la
+           // page suivante en répartition manuelle, avec des champs vierges.
+           setDistributionManuelle(decisionModifiee);
+           if (decisionModifiee) setAllocationsManuelles({});
+           setState(prev => ({ ...prev, step: 'boutique-distribution' }));
+          }}
           className="w-full py-4 bg-[#0958D9] text-white text-lg lg:text-xl rounded hover:bg-blue-800 transition-all"
          >
           Valider et Répartir
@@ -1692,7 +1840,24 @@ export default function App() {
    ? ALL_BOUTIQUES.filter(b => b.ville === villeFilter)
    : ALL_BOUTIQUES;
 
-  const totalAllocation = activeSku ? activeSku.totalReassort : 120;
+  // En mode manuel, l'objectif est la quantité saisie par l'utilisateur et
+  // les quantités par boutique viennent de sa saisie, pas du calcul.
+  const recommandationSku = activeSku ? activeSku.totalReassort : 120;
+  const objectifTotal =
+   distributionManuelle && decisionFinale !== null
+    ? Number(decisionFinale) || 0
+    : recommandationSku;
+
+  const quantiteBoutique = (nom: string, calculee: number) =>
+   distributionManuelle ? Number(allocationsManuelles[nom] ?? '') || 0 : calculee;
+
+  const totalReparti = ALL_BOUTIQUES.reduce(
+   (somme, b) => somme + quantiteBoutique(b.name, b.units),
+   0
+  );
+  const resteAReparti = objectifTotal - totalReparti;
+
+  const totalAllocation = distributionManuelle ? totalReparti : recommandationSku;
 
   return (
    <div className="flex h-screen bg-white font-sans text-slate-900 overflow-hidden relative">
@@ -1792,6 +1957,52 @@ export default function App() {
         </div>
        </div>
 
+       {/* Suivi de la répartition saisie à la main. */}
+       {distributionManuelle && (
+        <div className={`p-4 rounded-lg border flex flex-wrap items-center justify-between gap-4 ${
+         resteAReparti === 0
+          ? 'bg-[#F6FFED] border-[#B7EB8F]'
+          : 'bg-[#FFFBE6] border-[#FFE58F]'
+        }`}>
+         <div className="flex items-start gap-3">
+          {resteAReparti === 0
+           ? <CheckCircle2 size={20} className="text-green-600 shrink-0 mt-0.5" />
+           : <AlertCircle size={20} className="text-[#D48806] shrink-0 mt-0.5" />}
+          <div>
+           <p className="text-sm font-bold text-black/80">Répartition manuelle</p>
+           <p className="text-xs text-black/60 leading-relaxed">
+            Vous avez retenu {objectifTotal} unités au lieu des {recommandationSku} recommandées.
+            Saisissez la quantité de chaque boutique.
+           </p>
+          </div>
+         </div>
+         <div className="flex items-center gap-6">
+          <div className="text-right">
+           <p className="text-[10px] text-black/45 uppercase font-bold">Réparti</p>
+           <p className="text-lg font-bold text-[#0958D9]">{totalReparti} / {objectifTotal}</p>
+          </div>
+          <div className="text-right">
+           <p className="text-[10px] text-black/45 uppercase font-bold">Reste</p>
+           <p className={`text-lg font-bold ${
+            resteAReparti === 0 ? 'text-green-600' : resteAReparti < 0 ? 'text-red-500' : 'text-[#D48806]'
+           }`}>
+            {resteAReparti > 0 ? resteAReparti : resteAReparti < 0 ? `+${-resteAReparti} en trop` : '0'}
+           </p>
+          </div>
+          <button
+           onClick={() => {
+            setDistributionManuelle(false);
+            setDecisionFinale(null);
+            setAllocationsManuelles({});
+           }}
+           className="px-4 py-2 border border-[#D9D9D9] bg-white rounded text-xs font-bold text-black/65 hover:bg-slate-50 transition-colors"
+          >
+           Revenir à la répartition IA
+          </button>
+         </div>
+        </div>
+       )}
+
        <div className="grid grid-cols-1 lg:grid-cols-2 gap-4 lg:gap-6">
         {BOUTIQUES.map((boutique, i) => (
          <div key={i} className="bg-white border border-[#D9D9D9] rounded-lg p-4 lg:p-6 space-y-4 shadow-sm">
@@ -1803,9 +2014,28 @@ export default function App() {
               <h3 className="text-base lg:text-xl font-bold text-black/88 truncate">{boutique.name}</h3>
               <p className="text-xs lg:text-sm text-black/45 mb-2">{boutique.type}</p>
              </div>
-             <div className="text-right">
-              <p className="text-xl lg:text-3xl font-bold text-[#0958D9] leading-none">{boutique.units}</p>
-              <p className="text-[10px] lg:text-xs text-black/45">unités</p>
+             <div className="text-right shrink-0">
+              {distributionManuelle ? (
+               <>
+                <input
+                 type="number"
+                 min="0"
+                 inputMode="numeric"
+                 placeholder="0"
+                 value={allocationsManuelles[boutique.name] ?? ''}
+                 onChange={(e) =>
+                  setAllocationsManuelles(prev => ({ ...prev, [boutique.name]: e.target.value }))
+                 }
+                 className="w-20 lg:w-24 px-2 py-1 text-right text-xl lg:text-3xl font-bold text-[#0958D9] border border-[#D9D9D9] rounded focus:outline-none focus:ring-2 focus:ring-[#0958D9]/30 focus:border-[#0958D9] transition-all"
+                />
+                <p className="text-[10px] lg:text-xs text-black/45 mt-1">unités à saisir</p>
+               </>
+              ) : (
+               <>
+                <p className="text-xl lg:text-3xl font-bold text-[#0958D9] leading-none">{boutique.units}</p>
+                <p className="text-[10px] lg:text-xs text-black/45">unités</p>
+               </>
+              )}
              </div>
             </div>
             <div className="bg-[#F0F7FF] border border-[#BAE0FF] rounded p-2">
@@ -1818,18 +2048,29 @@ export default function App() {
            <div> <p className="text-[10px] lg:text-xs text-black/45 mb-1">Stock actuel</p> <p className="text-sm lg:text-base font-bold">{boutique.stock}</p> <p className="text-[10px] text-black/45">unités</p> </div>
            <div> <p className="text-[10px] lg:text-xs text-black/45 mb-1">Prévision IA</p> <p className="text-sm lg:text-base font-bold">{boutique.prevision}</p> <p className="text-[10px] text-black/45">unités</p> </div>
           </div>
-          <div className="pt-2">
-           <div className="flex justify-between items-center mb-1">
-            <span className="text-[10px] lg:text-xs text-black/45">Allocation %</span>
-            <span className="text-[10px] lg:text-xs font-bold">{boutique.allocation.toFixed(1)}%</span>
-           </div>
-           <div className="w-full h-2 bg-[#F5F5F5] rounded-full overflow-hidden">
-            <div
-             className="h-full bg-[#0958D9] transition-all duration-500"
-             style={{ width: `${Math.min(100, boutique.allocation)}%` }}
-            />
-           </div>
-          </div>
+          {(() => {
+           // En mode manuel, le pourcentage se recalcule sur la saisie.
+           const quantite = quantiteBoutique(boutique.name, boutique.units);
+           const pourcentage = distributionManuelle
+            ? (objectifTotal > 0 ? (quantite / objectifTotal) * 100 : 0)
+            : boutique.allocation;
+           return (
+            <div className="pt-2">
+             <div className="flex justify-between items-center mb-1">
+              <span className="text-[10px] lg:text-xs text-black/45">
+               {distributionManuelle ? 'Part de votre objectif' : 'Allocation %'}
+              </span>
+              <span className="text-[10px] lg:text-xs font-bold">{pourcentage.toFixed(1)}%</span>
+             </div>
+             <div className="w-full h-2 bg-[#F5F5F5] rounded-full overflow-hidden">
+              <div
+               className="h-full bg-[#0958D9] transition-all duration-500"
+               style={{ width: `${Math.min(100, Math.max(0, pourcentage))}%` }}
+              />
+             </div>
+            </div>
+           );
+          })()}
          </div>
         ))}
        </div>
