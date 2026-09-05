@@ -174,6 +174,9 @@ export default function App() {
  // des coefficients et agrégation bottom-up des réassorts par SKU.
  const { villes: villesImportees, skus, skuMap, forecastRows } = useForecast(importedData);
 
+ // Profondeur d'historique accumulée, affichée sur la carte d'import.
+ const moisImportes = moisCouverts(importedData);
+
  // SKU sélectionné depuis le tableau de réassort du dashboard.
  const [selectedSku, setSelectedSku] = useState<string | null>(null);
  const activeSku = (selectedSku ? skuMap.get(selectedSku) : undefined) ?? skus[0];
@@ -2517,18 +2520,94 @@ export default function App() {
      <section className="bg-white rounded-2xl p-8 border border-slate-200 shadow-sm">
       <h3 className="text-xl font-bold mb-1">Ajoutez vos données</h3>
       <p className="text-sm text-slate-500 mb-8">Importez ou saisissez vos produits</p>
+      {/* Champ de sélection monté en permanence, hors d'AnimatePresence qui ne
+          gère que des enfants animés : il doit rester accessible après un
+          premier import pour pouvoir compléter l'historique. */}
+      <input
+       type="file"
+       multiple
+       ref={fileInputRef}
+       onChange={handleFileUpload}
+       className="hidden"
+       accept=".csv, .xlsx, .xls"
+      />
+
       <AnimatePresence mode="wait">
        {state.importedFile ? (
-        <motion.div initial={{ opacity: 0, scale: 0.95 }} animate={{ opacity: 1, scale: 1 }} exit={{ opacity: 0, scale: 0.95 }} className="p-6 border-2 border-blue-100 bg-blue-50/30 rounded-2xl relative group" >
-         <div className="flex items-center gap-4">
-          <div className="w-12 h-12 bg-blue-100 rounded-xl flex items-center justify-center text-blue-600"> <FileText size={24} /> </div>
-          <div className="flex-1 min-w-0"> <h4 className="font-bold text-slate-900 truncate">{state.importedFile.name}</h4> <p className="text-xs text-slate-500">{state.importedFile.size} • Importé le {state.importedFile.date}</p> <div className="mt-3 flex flex-wrap items-center gap-2"> <span className="inline-flex items-center px-2 py-1 bg-white rounded-md text-[10px] font-bold text-slate-600 border border-slate-100"> {state.importedFile.count} produits importés </span> {villesImportees.length > 0 && ( <span className="inline-flex items-center px-2 py-1 bg-white rounded-md text-[10px] font-bold text-slate-600 border border-slate-100"> {villesImportees.length} ville{villesImportees.length > 1 ? 's' : ''} : {villesImportees.join(', ')} </span> )} </div> </div>
-          <div className="flex items-center gap-2"> <button className="p-2 text-slate-400 hover:text-slate-600 transition-colors"> <Plus size={18} /> </button> <button onClick={removeFile} className="p-2 text-slate-400 hover:text-red-500 transition-colors" > <Trash2 size={18} /> </button> </div>
+        <motion.div initial={{ opacity: 0, scale: 0.95 }} animate={{ opacity: 1, scale: 1 }} exit={{ opacity: 0, scale: 0.95 }} className="space-y-4" >
+         <div className="p-6 border-2 border-blue-100 bg-blue-50/30 rounded-2xl">
+          <div className="flex items-center gap-4">
+           <div className="w-12 h-12 bg-blue-100 rounded-xl flex items-center justify-center text-blue-600"> <FileText size={24} /> </div>
+           <div className="flex-1 min-w-0">
+            <h4 className="font-bold text-slate-900 truncate">{state.importedFile.name}</h4>
+            <p className="text-xs text-slate-500">{state.importedFile.size} • Importé le {state.importedFile.date}</p>
+            <div className="mt-3 flex flex-wrap items-center gap-2">
+             <span className="inline-flex items-center px-2 py-1 bg-white rounded-md text-[10px] font-bold text-slate-600 border border-slate-100">
+              {state.importedFile.count} lignes importées
+             </span>
+             {villesImportees.length > 0 && (
+              <span className="inline-flex items-center px-2 py-1 bg-white rounded-md text-[10px] font-bold text-slate-600 border border-slate-100">
+               {villesImportees.length} ville{villesImportees.length > 1 ? 's' : ''} : {villesImportees.join(', ')}
+              </span>
+             )}
+             {moisImportes.length > 0 && (
+              <span className="inline-flex items-center px-2 py-1 bg-white rounded-md text-[10px] font-bold text-slate-600 border border-slate-100">
+               {moisImportes.length} mois : {moisImportes[0]} → {moisImportes[moisImportes.length - 1]}
+              </span>
+             )}
+            </div>
+           </div>
+           <div className="flex items-center gap-2 shrink-0">
+            <button
+             onClick={() => fileInputRef.current?.click()}
+             title="Ajouter un autre fichier"
+             className="p-2 text-slate-400 hover:text-[#0958D9] transition-colors"
+            >
+             <Plus size={18} />
+            </button>
+            <button onClick={removeFile} title="Tout supprimer" className="p-2 text-slate-400 hover:text-red-500 transition-colors">
+             <Trash2 size={18} />
+            </button>
+           </div>
+          </div>
+
+          {/* Liste des fichiers cumulés dans l'historique. */}
+          {(state.importedFile.sources?.length ?? 0) > 0 && (
+           <div className="mt-4 pt-4 border-t border-blue-100">
+            <p className="text-[10px] font-bold text-slate-400 uppercase tracking-wider mb-2">
+             Fichier{state.importedFile.sources!.length > 1 ? 's' : ''} chargé{state.importedFile.sources!.length > 1 ? 's' : ''}
+            </p>
+            <ul className="space-y-1">
+             {state.importedFile.sources!.map((nom) => (
+              <li key={nom} className="flex items-center gap-2 text-xs text-slate-600">
+               <FileSpreadsheet size={13} className="text-slate-400 shrink-0" />
+               <span className="truncate">{nom}</span>
+              </li>
+             ))}
+            </ul>
+           </div>
+          )}
          </div>
+
+         {/* Champ dédié pour compléter l'historique avec un autre exercice. */}
+         <button
+          onClick={() => fileInputRef.current?.click()}
+          className="w-full flex items-center gap-4 p-4 border-2 border-dashed border-slate-200 rounded-2xl hover:border-blue-400 hover:bg-blue-50/50 transition-all group text-left"
+         >
+          <div className="w-10 h-10 bg-blue-50 rounded-full flex items-center justify-center text-blue-500 shrink-0 group-hover:scale-110 transition-transform">
+           <Plus size={20} />
+          </div>
+          <div className="min-w-0">
+           <span className="block font-bold text-sm text-slate-800">Ajouter un autre fichier</span>
+           <span className="block text-[10px] text-slate-400">
+            Les lignes s'ajoutent à l'historique existant. Réimporter le même fichier ne crée pas de doublon.
+           </span>
+          </div>
+         </button>
         </motion.div>
        ) : (
         <div className="grid grid-cols-2 gap-4">
-         <button onClick={() => fileInputRef.current?.click()} className="flex flex-col items-center justify-center p-8 border-2 border-dashed border-slate-200 rounded-2xl hover:border-blue-400 hover:bg-blue-50/50 transition-all group" > <div className="w-12 h-12 bg-blue-50 rounded-full flex items-center justify-center text-blue-500 mb-4 group-hover:scale-110 transition-transform"> <Upload size={24} /> </div> <span className="font-bold text-sm mb-1">Importer des fichiers</span> <span className="text-[10px] text-slate-400 text-center">Plusieurs fichiers acceptés : un par exercice pour bâtir l'historique</span> <input type="file" multiple ref={fileInputRef} onChange={handleFileUpload} className="hidden" accept=".csv, .xlsx, .xls" /> </button>
+         <button onClick={() => fileInputRef.current?.click()} className="flex flex-col items-center justify-center p-8 border-2 border-dashed border-slate-200 rounded-2xl hover:border-blue-400 hover:bg-blue-50/50 transition-all group" > <div className="w-12 h-12 bg-blue-50 rounded-full flex items-center justify-center text-blue-500 mb-4 group-hover:scale-110 transition-transform"> <Upload size={24} /> </div> <span className="font-bold text-sm mb-1">Importer des fichiers</span> <span className="text-[10px] text-slate-400 text-center">Plusieurs fichiers acceptés : un par exercice pour bâtir l'historique</span> </button>
          <button onClick={handleErpConnect} disabled={state.isConnectingErp} className={`flex flex-col items-center justify-center p-8 border-2 border-dashed rounded-2xl transition-all group ${ state.isErpConnected ? 'border-purple-400 bg-purple-50/50' : state.isConnectingErp ? 'border-purple-200 bg-purple-50/30 cursor-wait' : 'border-slate-200 hover:border-purple-400 hover:bg-purple-50/50' }`} >
           <div className={`w-12 h-12 rounded-full flex items-center justify-center mb-4 group-hover:scale-110 transition-transform ${ state.isErpConnected ? 'bg-purple-100 text-purple-600' : state.isConnectingErp ? 'bg-purple-50 text-purple-400' : 'bg-purple-50 text-purple-500' }`}> {state.isConnectingErp ? ( <div className="w-6 h-6 border-2 border-purple-500 border-t-transparent rounded-full animate-spin" /> ) : state.isErpConnected ? ( <CheckCircle2 size={24} /> ) : ( <Database size={24} /> )} </div>
           <span className="font-bold text-sm mb-1"> {state.isConnectingErp ? 'Connexion...' : state.isErpConnected ? 'ERP Connecté' : 'acceder a ERP'} </span>
