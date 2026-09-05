@@ -260,18 +260,18 @@ export default function App() {
   ];
 
   const logoSection = variant === 'default' ? (
-   <div className="p-6 flex items-center gap-3 mb-8">
-    <img src={LOGO_URL} alt="Smart Retail Logo" className="w-8 h-8 object-contain" referrerPolicy="no-referrer" />
+  <div className="p-6 flex items-center gap-3 mb-8">
+    <img src="https://www.hebergement-photo.fr/uploads/20260905/4d081179a9808929eea6199fbe2036dcb91210c8.png" alt="Smart Retail Logo" className="w-8 h-8 object-contain" referrerPolicy="no-referrer" />
     <span className="text-lg font-bold tracking-tight">SMART RETAIL</span>
-   </div>
-  ) : (
-   <div className="p-8 flex items-center gap-4 mb-4">
+  </div>
+) : (
+  <div className="p-8 flex items-center gap-4 mb-4">
     <div className="w-[52px] h-[52px] bg-black flex items-center justify-center relative">
       <div className="w-[17px] h-[22px] bg-[#0958D9]"></div>
     </div>
     <span className="text-2xl font-semibold tracking-tight">SMART RETAIL</span>
-   </div>
-  );
+  </div>
+);
 
   return (
    <div className="h-full flex flex-col">
@@ -347,10 +347,10 @@ export default function App() {
   return (
    <div className="min-h-screen bg-[#f4f7fa] font-sans text-slate-900">
     <header className="bg-white border-b border-slate-200 px-8 py-4 flex items-center justify-between sticky top-0 z-50">
-     <div className="flex items-center gap-3">
-      <img src={LOGO_URL} alt="Smart Retail Logo" className="w-10 h-10 object-contain" referrerPolicy="no-referrer" />
-      <span className="text-xl font-bold tracking-tight">SMART RETAIL</span>
-     </div>
+        <div className="flex items-center gap-3">
+            <img src="https://www.hebergement-photo.fr/uploads/20260905/4d081179a9808929eea6199fbe2036dcb91210c8.png" alt="Smart Retail Logo" className="w-10 h-10 object-contain" referrerPolicy="no-referrer" />
+            <span className="text-xl font-bold tracking-tight">SMART RETAIL</span>
+        </div>
      <span className="text-sm text-slate-400">Configuration initiale</span>
     </header>
 
@@ -506,10 +506,10 @@ export default function App() {
   return (
    <div className="min-h-screen bg-[#f4f7fa] font-sans text-slate-900">
     <header className="bg-white border-b border-slate-200 px-8 py-4 flex items-center justify-between sticky top-0 z-50">
-     <div className="flex items-center gap-3">
-      <img src={LOGO_URL} alt="Smart Retail Logo" className="w-10 h-10 object-contain" referrerPolicy="no-referrer" />
-      <span className="text-xl font-bold tracking-tight">SMART RETAIL</span>
-     </div>
+        <div className="flex items-center gap-3">
+            <img src="https://www.hebergement-photo.fr/uploads/20260905/4d081179a9808929eea6199fbe2036dcb91210c8.png" alt="Smart Retail Logo" className="w-10 h-10 object-contain" referrerPolicy="no-referrer" />
+            <span className="text-xl font-bold tracking-tight">SMART RETAIL</span>
+        </div>
      <span className="text-sm text-slate-400">Configuration terminée</span>
     </header>
 
@@ -961,7 +961,7 @@ export default function App() {
        
        <div className="flex items-center gap-4 lg:gap-6">
         <img 
-         src="https://placehold.co/90x120" 
+         src="https://www.hebergement-photo.fr/uploads/20260905/765dea14accea4b9078bf8ce3129ca9848d89d9f.jpg" 
          alt="Jimmy Veste" 
          className="w-[60px] h-[80px] lg:w-[90px] lg:h-[120px] object-cover"
          referrerPolicy="no-referrer"
@@ -1480,7 +1480,7 @@ export default function App() {
     <div className="hidden lg:flex lg:w-1/2 bg-[#f0f7ff] flex-col justify-end p-16 relative overflow-hidden">
      <div className="relative z-10">
       <div className="flex items-center gap-4">
-       <img src={LOGO_URL} alt="Smart Retail Logo" className="w-16 h-16 object-contain" referrerPolicy="no-referrer" />
+       <img src="https://www.hebergement-photo.fr/uploads/20260905/4d081179a9808929eea6199fbe2036dcb91210c8.png" alt="Smart Retail Logo" className="w-16 h-16 object-contain" referrerPolicy="no-referrer" />
        <span className="text-3xl font-bold tracking-tight text-slate-900">SMART RETAIL</span>
       </div>
      </div>
@@ -1546,7 +1546,7 @@ export default function App() {
   <div className="min-h-screen bg-[#f4f7fa] font-sans text-slate-900">
    <header className="bg-white border-b border-slate-200 px-8 py-4 flex items-center justify-between sticky top-0 z-50">
     <div className="flex items-center gap-3">
-     <img src={LOGO_URL} alt="Smart Retail Logo" className="w-10 h-10 object-contain" referrerPolicy="no-referrer" />
+     <img src="https://www.hebergement-photo.fr/uploads/20260905/4d081179a9808929eea6199fbe2036dcb91210c8.png" alt="Smart Retail Logo" className="w-10 h-10 object-contain" referrerPolicy="no-referrer" />
      <span className="text-xl font-bold tracking-tight">SMART RETAIL</span>
     </div>
     <div className="flex items-center gap-6">
